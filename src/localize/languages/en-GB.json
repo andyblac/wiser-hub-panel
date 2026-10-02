@@ -27,6 +27,7 @@
   "panel.area_other": "Areas",
   "panel.at_a_glance": "At a glance",
   "panel.below_twenty_percent": "Below 20%",
+  "panel.chart_history": "24-hour history for {name}",
   "panel.device_one": "Device",
   "panel.device_other": "Devices",
   "panel.disabled_entities": "Disabled entities",

@@ -27,6 +27,7 @@
   "panel.area_other": "Zones",
   "panel.at_a_glance": "Vue d’ensemble",
   "panel.below_twenty_percent": "Inférieur à 20 %",
+  "panel.chart_history": "Historique sur 24 heures pour {name}",
   "panel.device_one": "Appareil",
   "panel.device_other": "Appareils",
   "panel.disabled_entities": "Entités désactivées",

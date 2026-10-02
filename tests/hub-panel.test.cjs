@@ -253,16 +253,28 @@ test("shows switch changes immediately while Home Assistant confirms the service
   const {Panel} = setup();
   const panel = new Panel();
   let release;
+  let calls = 0;
   panel._hass = {
     states:{"switch.plug":state("switch.plug", "off")},
-    callService:() => new Promise(resolve => { release = resolve; }),
+    callService:() => {
+      calls += 1;
+      return new Promise(resolve => { release = resolve; });
+    },
   };
   panel._renderSoon = () => {};
   const target = {dataset:{action:"service", domain:"switch", service:"turn_on", entity:"switch.plug"}};
   const request = panel._click({target:{closest:() => target}});
   assert.equal(panel._displayState("switch.plug").state, "on");
+  assert.equal(panel._busy.has("switch.plug"), true);
+  assert.match(
+    panel._control({entity_id:"switch.plug"}, panel._hass.states["switch.plug"]),
+    /disabled aria-busy="true"/,
+  );
+  await panel._click({target:{closest:() => target}});
+  assert.equal(calls, 1);
   release();
   await request;
+  assert.equal(panel._busy.has("switch.plug"), false);
 });
 
 test("clears a stale error after a successful service action", async () => {
@@ -279,7 +291,7 @@ test("clears a stale error after a successful service action", async () => {
   await panel._click({target:{closest:() => target}});
 
   assert.equal(panel._error, "");
-  assert.equal(renders, 1);
+  assert.equal(renders, 2);
 });
 
 test("clears a stale error after a successful value update", async () => {
@@ -294,6 +306,39 @@ test("clears a stale error after a successful value update", async () => {
   });
 
   assert.equal(panel._error, "");
+});
+
+test("adds accessible labels to search and history charts", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const temperature = state("sensor.hub_temperature", 20, {
+    device_class:"temperature",
+    friendly_name:"Hub temperature",
+  });
+  panel._hass = {states:{[temperature.entity_id]:temperature}};
+  panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
+  panel._hub = "Home";
+  panel._entries = [
+    {entity_id:temperature.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+  ];
+  panel._devices = [
+    {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
+  ];
+  const charts = panel._charts();
+  assert.match(charts, /role="img"/);
+  assert.match(charts, /aria-label="24-hour history for Hub temperature"/);
+  assert.ok(charts.indexOf("</summary>") < charts.indexOf('class="refresh"'));
+  assert.match(charts, /class="refresh"[\s\S]*aria-label="Refresh charts"/);
+
+  panel._visibleEntities = () => [];
+  panel._summary = () => ({devices:[], areas:new Set(), enabled:[], disabled:[], offline:[], batteries:[]});
+  panel._groups = () => "";
+  panel._charts = () => "";
+  panel._render();
+  assert.match(
+    panel.shadowRoot.innerHTML,
+    /id="search"[\s\S]*aria-label="Find a hub control or sensor…"/,
+  );
 });
 
 test("restores scroll only after collapsed sections regain their state", () => {

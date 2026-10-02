@@ -27,6 +27,7 @@
   "panel.area_other": "Bereiche",
   "panel.at_a_glance": "Auf einen Blick",
   "panel.below_twenty_percent": "Unter 20 %",
+  "panel.chart_history": "24-Stunden-Verlauf für {name}",
   "panel.device_one": "Gerät",
   "panel.device_other": "Geräte",
   "panel.disabled_entities": "Deaktivierte Entitäten",

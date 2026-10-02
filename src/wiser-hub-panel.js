@@ -141,6 +141,7 @@
       this._devices = [];
       this._history = new Map();
       this._optimistic = new Map();
+      this._busy = new Set();
       this._loading = true;
       this._historyLoading = false;
       this._error = "";
@@ -266,9 +267,7 @@
       this._renderSoon();
     }
     _clearError() {
-      if (!this._error) return;
       this._error = "";
-      this._renderSoon();
     }
     _integrationDevices() {
       const hubId = this._hubId();
@@ -375,6 +374,9 @@
 
     _control(entry, state) {
       const id = esc(entry.entity_id), domain = domainOf(entry.entity_id);
+      const disabled = this._busy.has(entry.entity_id)
+        ? ' disabled aria-busy="true"'
+        : "";
       if (unavailable(state)) return "";
       if (["switch", "light"].includes(domain)) {
         const active = state.state === "on";
@@ -386,6 +388,7 @@
           data-service="turn_${active ? "off" : "on"}"
           data-entity="${id}"
           aria-label="${actionLabel}"
+          ${disabled}
         ><ha-icon icon="mdi:power"></ha-icon></button>`;
       }
       if (domain === "cover") return `<div class="row-actions">
@@ -396,6 +399,7 @@
           data-service="open_cover"
           data-entity="${id}"
           aria-label="${this._t("common.open")}"
+          ${disabled}
         ><ha-icon icon="mdi:arrow-up"></ha-icon></button>
         <button
           class="mini"
@@ -404,6 +408,7 @@
           data-service="stop_cover"
           data-entity="${id}"
           aria-label="${this._t("common.stop")}"
+          ${disabled}
         ><ha-icon icon="mdi:stop"></ha-icon></button>
         <button
           class="mini"
@@ -412,6 +417,7 @@
           data-service="close_cover"
           data-entity="${id}"
           aria-label="${this._t("common.close")}"
+          ${disabled}
         ><ha-icon icon="mdi:arrow-down"></ha-icon></button>
       </div>`;
       if (domain === "button") {
@@ -421,6 +427,7 @@
           data-domain="button"
           data-service="press"
           data-entity="${id}"
+          ${disabled}
         >${this._t("common.run")}</button>`;
       }
       if (domain === "select") {
@@ -432,6 +439,7 @@
           data-action="select"
           data-entity="${id}"
           aria-label="${esc(this._t("common.choose", {name:entityName(state, entry, this._hass)}))}"
+          ${disabled}
         >${optionMarkup}</select>`;
       }
       if (["number", "input_number"].includes(domain)) {
@@ -449,6 +457,7 @@
               max="${max}"
               step="${step}"
               value="${Number(state.state)}"
+              ${disabled}
             >
             <span>${esc(this._formatState(state))}</span>
           </label>`;
@@ -489,17 +498,16 @@
             <span class="eyebrow">${this._t("panel.last_24_hours")}</span>
             <h2>${this._t("panel.at_a_glance")}</h2>
           </div>
-          <span class="chart-heading-actions">
-            <button
-              class="refresh"
-              data-action="history"
-              title="${this._t("common.refresh")}"
-            >
-              <ha-icon icon="mdi:refresh"></ha-icon>
-            </button>
-            <ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>
-          </span>
+          <ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>
         </summary>
+        <button
+          class="refresh"
+          data-action="history"
+          aria-label="${esc(this._t("common.refresh"))}"
+          title="${esc(this._t("common.refresh"))}"
+        >
+          <ha-icon icon="mdi:refresh"></ha-icon>
+        </button>
         <div class="charts">${candidates.map(({entry, state}, index) => {
           const history = [...(this._history.get(entry.entity_id) || [])];
           if (numeric(state)) history.push({value:Number(state.state),time:Date.now()});
@@ -526,7 +534,12 @@
                 <state-display data-state-display="${esc(entry.entity_id)}"></state-display>
               </strong>
             </div>
-            <svg viewBox="0 0 300 86" preserveAspectRatio="none" aria-label="24 hour history">
+            <svg
+              viewBox="0 0 300 86"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="${esc(this._t("panel.chart_history", {name:entityName(state, entry, this._hass)}))}"
+            >
               <defs>
                 <linearGradient id="fill-${index}" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0" stop-color="currentColor" stop-opacity=".28"/>
@@ -619,6 +632,14 @@
       }
       button, select, input {
         font: inherit;
+      }
+      button:focus-visible, select:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
+      }
+      button:disabled, select:disabled, input:disabled {
+        cursor: progress;
+        opacity: .65;
       }
       .page {
         max-width: 1500px;
@@ -750,6 +771,10 @@
         color: var(--primary-text-color);
         background: transparent;
       }
+      .search:focus-within {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 1px var(--primary-color);
+      }
       .status-line {
         color: var(--secondary-text-color);
         font-size: 13px;
@@ -785,22 +810,25 @@
         margin: 30px 0 14px;
         cursor: pointer;
         list-style: none;
+        padding-right: 52px;
       }
       .section-heading::-webkit-details-marker {
         display: none;
       }
-      .chart-heading-actions {
-        display: flex;
-        align-items: center;
-        gap: 10px;
+      .charts-section {
+        position: relative;
       }
       .charts-section:not([open]) .section-heading {
         margin-bottom: 0;
+        padding-right: 0;
       }
       .charts-section:not([open]) .chevron {
         transform: rotate(-90deg);
       }
       .refresh {
+        position: absolute;
+        top: 30px;
+        right: 0;
         display: grid;
         place-items: center;
         width: 40px;
@@ -810,6 +838,9 @@
         color: var(--secondary-text-color);
         background: var(--card-background-color);
         cursor: pointer;
+      }
+      .charts-section:not([open]) .refresh {
+        display: none;
       }
       .charts {
         display: grid;
@@ -1245,6 +1276,7 @@
               id="search"
               type="search"
               value="${esc(this._query)}"
+              aria-label="${esc(this._t("panel.search"))}"
               placeholder="${esc(this._t("panel.search"))}"
             >
           </label>
@@ -1282,17 +1314,24 @@
       if (action === "more") {
         this.dispatchEvent(new CustomEvent("hass-more-info", {detail:{entityId:target.dataset.entity},bubbles:true,composed:true}));
       } else if (action === "service") {
+        const entityId = target.dataset.entity;
+        if (this._busy.has(entityId)) return;
+        this._busy.add(entityId);
         const optimistic = target.dataset.service === "turn_on" ? "on"
           : target.dataset.service === "turn_off" ? "off"
           : target.dataset.service === "open_cover" ? "opening"
           : target.dataset.service === "close_cover" ? "closing" : null;
-        if (optimistic) this._showOptimistic(target.dataset.entity, optimistic);
+        if (optimistic) this._showOptimistic(entityId, optimistic);
+        else this._renderSoon();
         try {
-          await this._hass.callService(target.dataset.domain, target.dataset.service, {entity_id:target.dataset.entity});
+          await this._hass.callService(target.dataset.domain, target.dataset.service, {entity_id:entityId});
           this._clearError();
         } catch (error) {
-          if (optimistic) this._optimistic.delete(target.dataset.entity);
+          if (optimistic) this._optimistic.delete(entityId);
           this._error = this._t("panel.control_error", {error:error.message || error});
+          this._renderSoon();
+        } finally {
+          this._busy.delete(entityId);
           this._renderSoon();
         }
       } else if (action === "hub") {
@@ -1307,19 +1346,26 @@
 
     async _change(event) {
       const target = event.target;
+      if (!["select", "number"].includes(target.dataset.action)) return;
+      const entityId = target.dataset.entity;
+      if (this._busy.has(entityId)) return;
+      this._busy.add(entityId);
       try {
         if (target.dataset.action === "select") {
-          this._showOptimistic(target.dataset.entity, target.value);
-          await this._hass.callService("select", "select_option", {entity_id:target.dataset.entity, option:target.value});
+          this._showOptimistic(entityId, target.value);
+          await this._hass.callService("select", "select_option", {entity_id:entityId, option:target.value});
           this._clearError();
         } else if (target.dataset.action === "number") {
-          this._showOptimistic(target.dataset.entity, target.value);
-          await this._hass.callService(target.dataset.domain, "set_value", {entity_id:target.dataset.entity, value:Number(target.value)});
+          this._showOptimistic(entityId, target.value);
+          await this._hass.callService(target.dataset.domain, "set_value", {entity_id:entityId, value:Number(target.value)});
           this._clearError();
         }
       } catch (error) {
-        this._optimistic.delete(target.dataset.entity);
+        this._optimistic.delete(entityId);
         this._error = this._t("panel.update_error", {error:error.message || error});
+        this._renderSoon();
+      } finally {
+        this._busy.delete(entityId);
         this._renderSoon();
       }
     }
