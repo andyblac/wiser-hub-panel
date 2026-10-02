@@ -587,6 +587,7 @@
         height: 100%;
         min-width: 0;
         overflow: auto;
+        overflow-anchor: none;
         color: var(--primary-text-color);
         background: var(--primary-background-color);
         font-family: var(--ha-font-family-body,inherit);
@@ -1110,7 +1111,8 @@
     </style>`; }
 
     _render() {
-      const scrollTop = this.shadowRoot.host?.scrollTop || 0;
+      const scrollContainer = this.shadowRoot.host;
+      const scrollTop = scrollContainer?.scrollTop || 0;
       const search = this.shadowRoot.querySelector?.("#search");
       const searchFocused = Boolean(search && this.shadowRoot.activeElement === search);
       const selection = searchFocused ? [search.selectionStart, search.selectionEnd] : null;
@@ -1233,7 +1235,6 @@
         ${content}
       </div>`;
       this._hydrateNativeEntityElements();
-      this.shadowRoot.host.scrollTop = scrollTop;
       for (const group of this.shadowRoot.querySelectorAll?.("details.entity-group") || []) {
         if (closedGroups.has(group.dataset.group)) group.open = false;
       }
@@ -1246,6 +1247,10 @@
         nextSearch?.focus({preventScroll:true});
         nextSearch?.setSelectionRange(...selection);
       }
+      // Restore the scroll position only after the new DOM has its final shape.
+      // Collapsing details above the viewport after restoring scroll allows the
+      // browser's scroll anchoring to move the panel on every state update.
+      if (scrollContainer) scrollContainer.scrollTop = scrollTop;
     }
 
     async _click(event) {

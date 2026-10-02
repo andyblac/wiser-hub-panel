@@ -202,3 +202,46 @@ test("shows switch changes immediately while Home Assistant confirms the service
   release();
   await request;
 });
+
+test("restores scroll only after collapsed sections regain their state", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const operations = [];
+  let rendered = false;
+  let scrollTop = 640;
+  const previousGroup = {dataset:{group:"diagnostics"}};
+  const nextGroup = {
+    dataset:{group:"diagnostics"},
+    _open:true,
+    set open(value) { this._open = value; operations.push(`group:${value}`); },
+    get open() { return this._open; },
+  };
+  const host = {
+    get scrollTop() { return scrollTop; },
+    set scrollTop(value) { scrollTop = value; operations.push(`scroll:${value}`); },
+  };
+  Object.defineProperty(panel.shadowRoot, "innerHTML", {
+    get:() => "",
+    set:() => { rendered = true; },
+  });
+  panel.shadowRoot.host = host;
+  panel.shadowRoot.activeElement = null;
+  panel.shadowRoot.querySelector = () => null;
+  panel.shadowRoot.querySelectorAll = selector => {
+    if (selector === "details.entity-group:not([open])") return rendered ? [] : [previousGroup];
+    if (selector === "details.entity-group") return rendered ? [nextGroup] : [];
+    return [];
+  };
+  panel._hass = {states:{}};
+  panel._config = {hubs:[]};
+  panel._visibleEntities = () => [];
+  panel._summary = () => ({devices:[], areas:new Set(), enabled:[], disabled:[], offline:[], batteries:[]});
+  panel._hubDevice = () => null;
+  panel._groups = () => "";
+  panel._charts = () => "";
+  panel._hydrateNativeEntityElements = () => {};
+
+  panel._render();
+
+  assert.deepEqual(operations, ["group:false", "scroll:640"]);
+});
