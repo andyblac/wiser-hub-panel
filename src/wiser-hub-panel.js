@@ -268,6 +268,11 @@
       this._optimistic.set(entityId, {state:String(value), at:Date.now()});
       this._renderSoon();
     }
+    _clearError() {
+      if (!this._error) return;
+      this._error = "";
+      this._renderSoon();
+    }
     _integrationDevices() {
       const hubId = this._hubId();
       return this._devices.filter(device => !hubId || device.config_entries?.includes(hubId));
@@ -1287,6 +1292,7 @@
         if (optimistic) this._showOptimistic(target.dataset.entity, optimistic);
         try {
           await this._hass.callService(target.dataset.domain, target.dataset.service, {entity_id:target.dataset.entity});
+          this._clearError();
         } catch (error) {
           if (optimistic) this._optimistic.delete(target.dataset.entity);
           this._error = this._t("panel.control_error", {error:error.message || error});
@@ -1308,9 +1314,11 @@
         if (target.dataset.action === "select") {
           this._showOptimistic(target.dataset.entity, target.value);
           await this._hass.callService("select", "select_option", {entity_id:target.dataset.entity, option:target.value});
+          this._clearError();
         } else if (target.dataset.action === "number") {
           this._showOptimistic(target.dataset.entity, target.value);
           await this._hass.callService(target.dataset.domain, "set_value", {entity_id:target.dataset.entity, value:Number(target.value)});
+          this._clearError();
         }
       } catch (error) {
         this._optimistic.delete(target.dataset.entity);

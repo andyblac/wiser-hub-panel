@@ -258,6 +258,37 @@ test("shows switch changes immediately while Home Assistant confirms the service
   await request;
 });
 
+test("clears a stale error after a successful service action", async () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  panel._error = "Previous failure";
+  panel._hass = {callService:async () => {}};
+  let renders = 0;
+  panel._renderSoon = () => { renders += 1; };
+  const target = {
+    dataset:{action:"service", domain:"button", service:"press", entity:"button.identify"},
+  };
+
+  await panel._click({target:{closest:() => target}});
+
+  assert.equal(panel._error, "");
+  assert.equal(renders, 1);
+});
+
+test("clears a stale error after a successful value update", async () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  panel._error = "Previous failure";
+  panel._hass = {callService:async () => {}};
+  panel._renderSoon = () => {};
+
+  await panel._change({
+    target:{dataset:{action:"select", entity:"select.mode"}, value:"Auto"},
+  });
+
+  assert.equal(panel._error, "");
+});
+
 test("restores scroll only after collapsed sections regain their state", () => {
   const {Panel} = setup();
   const panel = new Panel();
