@@ -150,31 +150,38 @@ test("does not report an unpressed Home Assistant button as unavailable", () => 
 test("discovers only enabled Wiser entities for the selected hub", async () => {
   const {Panel} = setup();
   const panel = new Panel();
+  const requests = [];
   panel._hass = {
     states:{
       "sensor.temperature":state("sensor.temperature", 20, {device_class:"temperature"}),
       "sensor.disabled":state("sensor.disabled", 10),
       "sensor.other":state("sensor.other", 5),
     },
-    callWS:async ({type}) => ({
-      "config/entity_registry/list":[
-        {entity_id:"sensor.temperature", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
-        {entity_id:"sensor.disabled", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a", disabled_by:"integration"},
-        {entity_id:"sensor.child", platform:"wiser", config_entry_id:"hub-a", device_id:"device-child"},
-        {entity_id:"sensor.other", platform:"wiser", config_entry_id:"hub-b", device_id:"device-b"},
-        {entity_id:"sensor.foreign", platform:"other", config_entry_id:"hub-a"},
-      ],
-      "config/device_registry/list":[
-        {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
-        {id:"device-child", config_entries:["hub-a"], via_device_id:"device-a", model:"Smart plug"},
-      ],
-      "config/area_registry/list":[],
-    })[type],
+    callWS:async ({type}) => {
+      requests.push(type);
+      return ({
+        "config/entity_registry/list":[
+          {entity_id:"sensor.temperature", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+          {entity_id:"sensor.disabled", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a", disabled_by:"integration"},
+          {entity_id:"sensor.child", platform:"wiser", config_entry_id:"hub-a", device_id:"device-child"},
+          {entity_id:"sensor.other", platform:"wiser", config_entry_id:"hub-b", device_id:"device-b"},
+          {entity_id:"sensor.foreign", platform:"other", config_entry_id:"hub-a"},
+        ],
+        "config/device_registry/list":[
+          {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
+          {id:"device-child", config_entries:["hub-a"], via_device_id:"device-a", model:"Smart plug"},
+        ],
+      })[type];
+    },
   };
   panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
   panel._hub = "Home";
   panel._loadHistory = () => {};
   await panel._discover();
+  assert.deepEqual(requests.sort(), [
+    "config/device_registry/list",
+    "config/entity_registry/list",
+  ]);
   assert.deepEqual(Array.from(panel._hubEntries(), entry => entry.entity_id), ["sensor.temperature"]);
   assert.equal(panel._hubEntries(true).length, 2);
   assert.equal(panel._hubDevices().length, 1);

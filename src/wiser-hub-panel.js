@@ -139,7 +139,6 @@
       this.attachShadow({mode:"open"});
       this._entries = [];
       this._devices = [];
-      this._areas = [];
       this._history = new Map();
       this._optimistic = new Map();
       this._loading = true;
@@ -217,15 +216,13 @@
       this._error = "";
       this._renderSoon();
       try {
-        const [entries, devices, areas] = await Promise.all([
+        const [entries, devices] = await Promise.all([
           this._hass.callWS({type:"config/entity_registry/list"}),
           this._hass.callWS({type:"config/device_registry/list"}),
-          this._hass.callWS({type:"config/area_registry/list"}),
         ]);
         if (generation !== this._discoveryGeneration) return;
         this._entries = entries.filter(entry => entry.platform === "wiser");
         this._devices = devices;
-        this._areas = areas;
         this._loading = false;
         this._loadHistory();
       } catch (error) {
