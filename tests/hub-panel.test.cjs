@@ -187,6 +187,61 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
   assert.equal(summary.offline.length, 0);
 });
 
+test("ignores Home Assistant updates unrelated to the selected hub", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const hubState = state("sensor.hub_temperature", 20, {device_class:"temperature"});
+  const previous = {
+    states:{
+      [hubState.entity_id]:hubState,
+      "sensor.unrelated":state("sensor.unrelated", 1),
+    },
+  };
+  panel._hass = previous;
+  panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
+  panel._hub = "Home";
+  panel._entries = [
+    {entity_id:hubState.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+  ];
+  panel._devices = [
+    {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
+  ];
+  let renders = 0;
+  panel._renderSoon = () => { renders += 1; };
+
+  panel.hass = {
+    ...previous,
+    states:{...previous.states, "sensor.unrelated":state("sensor.unrelated", 2)},
+  };
+
+  assert.equal(renders, 0);
+});
+
+test("renders when a selected hub state changes", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const hubState = state("sensor.hub_temperature", 20, {device_class:"temperature"});
+  const previous = {states:{[hubState.entity_id]:hubState}};
+  panel._hass = previous;
+  panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
+  panel._hub = "Home";
+  panel._entries = [
+    {entity_id:hubState.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+  ];
+  panel._devices = [
+    {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
+  ];
+  let renders = 0;
+  panel._renderSoon = () => { renders += 1; };
+
+  panel.hass = {
+    ...previous,
+    states:{...previous.states, [hubState.entity_id]:state(hubState.entity_id, 21, hubState.attributes)},
+  };
+
+  assert.equal(renders, 1);
+});
+
 test("shows switch changes immediately while Home Assistant confirms the service", async () => {
   const {Panel} = setup();
   const panel = new Panel();

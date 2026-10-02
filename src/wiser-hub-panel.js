@@ -166,15 +166,18 @@
     }
 
     set hass(value) {
+      const updateAffectsPanel = this._hassUpdateAffectsPanel(this._hass, value);
       const connectionChanged = this._hass?.connection && this._hass.connection !== value?.connection;
       this._hass = value;
+      let optimisticChanged = false;
       for (const [entityId, pending] of this._optimistic) {
         if (value?.states?.[entityId]?.state === pending.state || Date.now() - pending.at > 5000) {
           this._optimistic.delete(entityId);
+          optimisticChanged = true;
         }
       }
       if (connectionChanged) this._discover(true);
-      else this._renderSoon();
+      else if (updateAffectsPanel || optimisticChanged) this._renderSoon();
     }
 
     connectedCallback() { this._renderSoon(); }
@@ -186,6 +189,23 @@
         this._renderFrame = 0;
         this._render();
       });
+    }
+
+    _hassUpdateAffectsPanel(previous, next) {
+      if (!previous || !next) return true;
+      if (
+        previous.language !== next.language
+        || previous.locale !== next.locale
+        || previous.localize !== next.localize
+        || previous.formatEntityName !== next.formatEntityName
+        || previous.formatEntityState !== next.formatEntityState
+        || previous.entities !== next.entities
+        || previous.devices !== next.devices
+        || previous.areas !== next.areas
+      ) return true;
+      return this._hubEntries().some(entry => (
+        previous.states?.[entry.entity_id] !== next.states?.[entry.entity_id]
+      ));
     }
 
     async _discover(force = false) {
