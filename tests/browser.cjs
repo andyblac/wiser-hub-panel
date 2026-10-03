@@ -37,6 +37,14 @@ function fixtureData() {
     device_class:"temperature",
     friendly_name:"Hub temperature",
   });
+  entries.push({
+    entity_id:"sensor.disabled_control",
+    platform:"wiser",
+    config_entry_id:"hub-a",
+    device_id:"device-a",
+    disabled_by:"user",
+    name:"Disabled control",
+  });
   return {entries, states};
 }
 
@@ -72,6 +80,14 @@ function fixtureData() {
           manufacturer:"Drayton",
           model:"HubR",
         },
+        {
+          id:"device-disabled",
+          config_entries:["hub-a"],
+          via_device_id:"device-a",
+          name:"Disabled thermostat",
+          model:"Room thermostat",
+          disabled_by:"user",
+        },
       ];
       const hass = {
         language:"en-GB",
@@ -91,6 +107,10 @@ function fixtureData() {
       panel.panel = {
         config:{hubs:["Home", "Workshop"], hub_ids:{Home:"hub-a", Workshop:"hub-b"}},
       };
+      window.moreInfoEntity = null;
+      panel.addEventListener("hass-more-info", event => {
+        window.moreInfoEntity = event.detail.entityId;
+      });
       window.fixture = {panel, hass};
     }, fixture);
 
@@ -133,6 +153,29 @@ function fixtureData() {
     );
     await page.locator('wiser-hub-panel [data-action="attention"]').click();
     assert.equal(await attentionDetails.isHidden(), true);
+    const disabledDevices = page.getByRole("button", {name:"Show disabled devices"});
+    const disabledDeviceDetails = page.locator("wiser-hub-panel #disabled-devices-details");
+    assert.equal(await disabledDeviceDetails.isHidden(), true);
+    await disabledDevices.click();
+    assert.equal(await disabledDeviceDetails.isVisible(), true);
+    assert.match(await disabledDeviceDetails.textContent(), /Disabled thermostat/);
+    assert.equal(
+      await disabledDeviceDetails.getByRole("link", {name:"Details: Disabled thermostat"}).getAttribute("href"),
+      "/config/devices/device/device-disabled",
+    );
+    await page.locator('wiser-hub-panel [data-action="disabled-devices"]').click();
+    assert.equal(await disabledDeviceDetails.isHidden(), true);
+
+    const disabledEntities = page.getByRole("button", {name:"Show disabled entities"});
+    const disabledEntityDetails = page.locator("wiser-hub-panel #disabled-entities-details");
+    assert.equal(await disabledEntityDetails.isHidden(), true);
+    await disabledEntities.click();
+    assert.equal(await disabledEntityDetails.isVisible(), true);
+    assert.match(await disabledEntityDetails.textContent(), /Disabled control/);
+    await disabledEntityDetails.getByRole("button", {name:"Details: Disabled control"}).click();
+    assert.equal(await page.evaluate(() => window.moreInfoEntity), "sensor.disabled_control");
+    await page.locator('wiser-hub-panel [data-action="disabled-entities"]').click();
+    assert.equal(await disabledEntityDetails.isHidden(), true);
     assert.ok(await panel.evaluate(element => element.scrollHeight > element.clientHeight));
 
     const firstGroup = page.locator("wiser-hub-panel details.entity-group").first();

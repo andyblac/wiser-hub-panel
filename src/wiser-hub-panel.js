@@ -146,6 +146,8 @@
       this._historyLoading = false;
       this._diagnosticsBusy = false;
       this._attentionOpen = false;
+      this._disabledDevicesOpen = false;
+      this._disabledEntitiesOpen = false;
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
@@ -289,6 +291,8 @@
       this._hub = hub;
       this._query = "";
       this._attentionOpen = false;
+      this._disabledDevicesOpen = false;
+      this._disabledEntitiesOpen = false;
       this._loadHistory();
       this._renderSoon();
     }
@@ -849,17 +853,17 @@
       .metric.alert strong {
         color: var(--error-color);
       }
-      button.attention-metric {
+      button.metric-toggle {
         width: 100%;
         color: inherit;
         font: inherit;
         text-align: left;
         cursor: pointer;
       }
-      button.attention-metric:hover {
+      button.metric-toggle:hover {
         border-color: var(--primary-color);
       }
-      button.attention-metric:focus-visible {
+      button.metric-toggle:focus-visible {
         outline: 2px solid var(--primary-color);
         outline-offset: 2px;
       }
@@ -930,6 +934,22 @@
       }
       .alert-card.error ha-icon {
         color: var(--error-color);
+      }
+      .detail-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        margin-top: 4px;
+      }
+      .detail-link {
+        padding: 0;
+        border: 0;
+        color: var(--primary-color);
+        background: transparent;
+        text-align: left;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        cursor: pointer;
       }
       .section-heading {
         display: flex;
@@ -1335,6 +1355,26 @@
       const hubs = this._config.hubs || [];
       const alertCount = summary.offline.length + summary.batteries.length;
       if (!alertCount) this._attentionOpen = false;
+      if (!summary.disabledDevices.length) this._disabledDevicesOpen = false;
+      if (!summary.disabled.length) this._disabledEntitiesOpen = false;
+      const disabledDeviceLinks = summary.disabledDevices.map(device => {
+        const name = device.name_by_user || device.name || device.model || device.id;
+        return `<a
+          class="detail-link"
+          href="/config/devices/device/${encodeURIComponent(device.id)}"
+          aria-label="${esc(`${this._t("common.details")}: ${name}`)}"
+        >${esc(name)}</a>`;
+      }).join("");
+      const disabledEntityLinks = summary.disabled.map(entry => {
+        const name = entityName(this._hass?.states?.[entry.entity_id], entry, this._hass);
+        return `<button
+          type="button"
+          class="detail-link"
+          data-action="more"
+          data-entity="${esc(entry.entity_id)}"
+          aria-label="${esc(`${this._t("common.details")}: ${name}`)}"
+        >${esc(name)}</button>`;
+      }).join("");
       const offlineNames = summary.offline
         .map(({entry, state}) => entityName(state, entry, this._hass))
         .join(", ");
@@ -1404,10 +1444,78 @@
             ${this._attentionOpen ? "" : "hidden"}
           >${offlineAlert}${batteryAlert}</div>`
         : "";
+      const disabledDeviceDetails = summary.disabledDevices.length
+        ? `<div
+            id="disabled-devices-details"
+            class="alerts"
+            role="region"
+            tabindex="-1"
+            aria-label="${esc(this._t("panel.disabled_devices_details"))}"
+            ${this._disabledDevicesOpen ? "" : "hidden"}
+          ><div class="alert-card">
+            <ha-icon icon="mdi:devices"></ha-icon>
+            <span>
+              <strong>${this._plural("panel.disabled_device", summary.disabledDevices.length)}</strong><br>
+              <span class="detail-list">${disabledDeviceLinks}</span>
+            </span>
+          </div></div>`
+        : "";
+      const disabledEntityDetails = summary.disabled.length
+        ? `<div
+            id="disabled-entities-details"
+            class="alerts"
+            role="region"
+            tabindex="-1"
+            aria-label="${esc(this._t("panel.disabled_entities_details"))}"
+            ${this._disabledEntitiesOpen ? "" : "hidden"}
+          ><div class="alert-card">
+            <ha-icon icon="mdi:cancel"></ha-icon>
+            <span>
+              <strong>${this._plural("panel.disabled_entity", summary.disabled.length)}</strong><br>
+              <span class="detail-list">${disabledEntityLinks}</span>
+            </span>
+          </div></div>`
+        : "";
+      const deviceMetric = summary.disabledDevices.length
+        ? `<button
+            type="button"
+            class="metric device-metric metric-toggle"
+            data-action="disabled-devices"
+            aria-controls="disabled-devices-details"
+            aria-expanded="${this._disabledDevicesOpen}"
+            aria-label="${esc(this._t(this._disabledDevicesOpen ? "panel.hide_disabled_devices" : "panel.show_disabled_devices"))}"
+          >
+            <span class="metric-title">${this._t(pluralKey("panel.device", summary.devices.length, this._hass))}</span>
+            <strong>${summary.devices.length - summary.disabledDevices.length} / ${summary.disabledDevices.length}</strong>
+            <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
+          </button>`
+        : `<div class="metric device-metric">
+            <span class="metric-title">${this._t(pluralKey("panel.device", summary.devices.length, this._hass))}</span>
+            <strong>${summary.devices.length} / 0</strong>
+            <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
+          </div>`;
+      const entityMetric = summary.disabled.length
+        ? `<button
+            type="button"
+            class="metric metric-toggle"
+            data-action="disabled-entities"
+            aria-controls="disabled-entities-details"
+            aria-expanded="${this._disabledEntitiesOpen}"
+            aria-label="${esc(this._t(this._disabledEntitiesOpen ? "panel.hide_disabled_entities" : "panel.show_disabled_entities"))}"
+          >
+            <span class="metric-title">${this._t("panel.entities")}</span>
+            <strong>${summary.enabled.length} / ${summary.disabled.length}</strong>
+            <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
+          </button>`
+        : `<div class="metric">
+            <span class="metric-title">${this._t("panel.entities")}</span>
+            <strong>${summary.enabled.length} / 0</strong>
+            <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
+          </div>`;
       const attentionMetric = alertCount
         ? `<button
             type="button"
-            class="metric attention-metric alert"
+            class="metric metric-toggle alert"
             data-action="attention"
             aria-controls="attention-details"
             aria-expanded="${this._attentionOpen}"
@@ -1444,16 +1552,8 @@
               <span class="metric-title">${this._t(pluralKey("panel.room", summary.rooms.length, this._hass))}</span>
               <strong>${summary.rooms.length}</strong>
             </div>
-            <div class="metric device-metric">
-              <span class="metric-title">${this._t(pluralKey("panel.device", summary.devices.length, this._hass))}</span>
-              <strong>${summary.devices.length - summary.disabledDevices.length} / ${summary.disabledDevices.length}</strong>
-              <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-title">${this._t("panel.entities")}</span>
-              <strong>${summary.enabled.length} / ${summary.disabled.length}</strong>
-              <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
-            </div>
+            ${deviceMetric}
+            ${entityMetric}
             ${attentionMetric}
           </div>
         </section>
@@ -1461,6 +1561,8 @@
           ${esc(this._error)}
           <button data-action="retry">${this._t("common.retry")}</button>
         </div>` : ""}
+        ${disabledDeviceDetails}
+        ${disabledEntityDetails}
         ${alerts}
         <div class="toolbar">
           <label class="search">
@@ -1539,16 +1641,20 @@
         this._selectHub(target.dataset.hub);
       } else if (action === "diagnostics") {
         await this._downloadDiagnostics();
-      } else if (action === "attention") {
-        const details = this.shadowRoot.querySelector("#attention-details");
+      } else if (["attention", "disabled-devices", "disabled-entities"].includes(action)) {
+        const toggles = {
+          attention:["#attention-details", "_attentionOpen", "panel.show_attention", "panel.hide_attention"],
+          "disabled-devices":["#disabled-devices-details", "_disabledDevicesOpen", "panel.show_disabled_devices", "panel.hide_disabled_devices"],
+          "disabled-entities":["#disabled-entities-details", "_disabledEntitiesOpen", "panel.show_disabled_entities", "panel.hide_disabled_entities"],
+        };
+        const [selector, stateProperty, showKey, hideKey] = toggles[action];
+        const details = this.shadowRoot.querySelector(selector);
         if (!details) return;
-        this._attentionOpen = details.hidden;
-        details.hidden = !this._attentionOpen;
-        target.setAttribute("aria-expanded", String(this._attentionOpen));
-        target.setAttribute("aria-label", this._t(
-          this._attentionOpen ? "panel.hide_attention" : "panel.show_attention",
-        ));
-        if (this._attentionOpen) {
+        this[stateProperty] = details.hidden;
+        details.hidden = !this[stateProperty];
+        target.setAttribute("aria-expanded", String(this[stateProperty]));
+        target.setAttribute("aria-label", this._t(this[stateProperty] ? hideKey : showKey));
+        if (this[stateProperty]) {
           details.focus({preventScroll:true});
           details.scrollIntoView({behavior:"smooth", block:"nearest"});
         }
