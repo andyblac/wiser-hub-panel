@@ -144,6 +144,7 @@
       this._busy = new Set();
       this._loading = true;
       this._historyLoading = false;
+      this._diagnosticsBusy = false;
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
@@ -299,6 +300,30 @@
     }
     _clearError() {
       this._error = "";
+    }
+    async _downloadDiagnostics() {
+      const entryId = this._hubId();
+      if (!entryId || this._diagnosticsBusy) return;
+      this._diagnosticsBusy = true;
+      this._renderSoon();
+      try {
+        const download = await this._hass.callWS({
+          type:"auth/sign_path",
+          path:`/api/diagnostics/config_entry/${encodeURIComponent(entryId)}`,
+        });
+        const link = document.createElement("a");
+        link.href = download.path;
+        link.download = "";
+        link.rel = "noopener";
+        link.click();
+        link.remove?.();
+        this._clearError();
+      } catch (error) {
+        this._error = this._t("panel.diagnostics_error", {error:error.message || error});
+      } finally {
+        this._diagnosticsBusy = false;
+        this._renderSoon();
+      }
     }
     _integrationDevices() {
       const hubId = this._hubId();
@@ -738,6 +763,19 @@
         margin: 8px 0 0;
         color: var(--secondary-text-color);
       }
+      .diagnostics-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+        min-height: 40px;
+        padding: 8px 13px;
+        border: 1px solid var(--divider-color);
+        border-radius: 12px;
+        color: var(--primary-text-color);
+        background: var(--secondary-background-color);
+        cursor: pointer;
+      }
       .hub-tabs {
         display: flex;
         min-width: 0;
@@ -1173,6 +1211,9 @@
         .hero-top {
           display: block;
         }
+        .diagnostics-button {
+          margin-top: 16px;
+        }
         .hub-tab {
           padding: 0 12px;
         }
@@ -1258,6 +1299,17 @@
         hub?.model,
         hub?.sw_version ? this._t("panel.firmware", {version:hub.sw_version}) : "",
       ].filter(Boolean).join(" · ") || this._t("panel.live_overview");
+      const diagnosticsButton = this._hass.user?.is_admin && this._hubId()
+        ? `<button
+            type="button"
+            class="diagnostics-button"
+            data-action="diagnostics"
+            ${this._diagnosticsBusy ? 'disabled aria-busy="true"' : ""}
+          >
+            <ha-icon icon="mdi:download"></ha-icon>
+            ${this._t("panel.download_diagnostics")}
+          </button>`
+        : "";
       const hubTabs = hubs.length > 1 ? `<nav
         class="hub-tabs"
         role="tablist"
@@ -1313,6 +1365,7 @@
               <h1>${esc(this._hub || this._t("panel.hub_overview"))}</h1>
               <p class="hub-meta">${esc(hubMetadata)}</p>
             </div>
+            ${diagnosticsButton}
           </div>
           <div class="metrics">
             <div class="metric">
@@ -1415,6 +1468,8 @@
         }
       } else if (action === "hub") {
         this._selectHub(target.dataset.hub);
+      } else if (action === "diagnostics") {
+        await this._downloadDiagnostics();
       } else if (action === "retry") this._discover(true);
       else if (action === "history") {
         event.preventDefault();

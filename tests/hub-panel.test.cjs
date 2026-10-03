@@ -42,7 +42,7 @@ function setup() {
   const source = fs.readFileSync(path.join(__dirname, "../src/wiser-hub-panel.js"), "utf8")
     .replaceAll("__WISER_HUB_TRANSLATIONS__", JSON.stringify(translations));
   vm.runInNewContext(source, context);
-  return {Panel:elements["wiser-hub-panel"], helpers:context.window.WiserHubPanelTest};
+  return {Panel:elements["wiser-hub-panel"], helpers:context.window.WiserHubPanelTest, context};
 }
 
 const state = (entity_id, value, attributes = {}) => ({
@@ -293,6 +293,47 @@ test("switches hub tabs with standard keyboard navigation", () => {
   assert.equal(histories, 1);
   assert.equal(renders, 1);
   assert.equal(prevented, true);
+});
+
+test("downloads diagnostics for the selected hub through a signed path", async () => {
+  const {Panel, context} = setup();
+  const panel = new Panel();
+  panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
+  panel._hub = "Home";
+  let request;
+  panel._hass = {
+    callWS:async message => {
+      request = message;
+      return {path:"/signed-diagnostics"};
+    },
+  };
+  let clicked = 0;
+  let removed = 0;
+  let link;
+  context.document = {
+    createElement:tag => {
+      assert.equal(tag, "a");
+      link = {
+        click:() => { clicked += 1; },
+        remove:() => { removed += 1; },
+      };
+      return link;
+    },
+  };
+  let renders = 0;
+  panel._renderSoon = () => { renders += 1; };
+
+  await panel._downloadDiagnostics();
+
+  assert.equal(request.type, "auth/sign_path");
+  assert.equal(request.path, "/api/diagnostics/config_entry/hub-a");
+  assert.equal(link.href, "/signed-diagnostics");
+  assert.equal(link.download, "");
+  assert.equal(link.rel, "noopener");
+  assert.equal(clicked, 1);
+  assert.equal(removed, 1);
+  assert.equal(renders, 2);
+  assert.equal(panel._diagnosticsBusy, false);
 });
 
 test("shows switch changes immediately while Home Assistant confirms the service", async () => {
