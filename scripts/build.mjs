@@ -18,8 +18,17 @@ for (const [language, strings] of Object.entries(translations)) {
 }
 const dev = process.argv.includes("--dev");
 const final = process.argv.includes("--release");
-if (dev && final) throw new Error("A build cannot be both development and final release");
-const build = buildVersion({dev, final, root:fileURLToPath(root), releaseTag:process.env.RELEASE_TAG});
+const preserve = process.argv.includes("--test");
+if ([dev, final, preserve].filter(Boolean).length > 1) {
+  throw new Error("A build cannot use more than one version mode");
+}
+const build = buildVersion({
+  dev,
+  final,
+  preserve,
+  root:fileURLToPath(root),
+  releaseTag:process.env.RELEASE_TAG,
+});
 const token = "__WISER_HUB_PANEL_VERSION__";
 if (!source.includes(token)) throw new Error(`Missing ${token} source token`);
 const translationToken = "__WISER_HUB_TRANSLATIONS__";

@@ -7,7 +7,13 @@ const DEVELOPMENT = /^(\d+\.\d+\.\d+)-dev\.(\d+)$/;
 const BETA_DEVELOPMENT = /^(\d+\.\d+\.\d+-beta\.\d+)-dev\.(\d+)$/;
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-export default function buildVersion({dev = false, final = false, root = process.cwd(), releaseTag} = {}) {
+export default function buildVersion({
+  dev = false,
+  final = false,
+  preserve = false,
+  root = process.cwd(),
+  releaseTag,
+} = {}) {
   const packagePath = resolve(root, "package.json");
   const packageData = JSON.parse(readFileSync(packagePath, "utf8"));
   const packageVersion = packageData.version;
@@ -22,7 +28,7 @@ export default function buildVersion({dev = false, final = false, root = process
     else if (beta) version = `${beta[1]}.${BigInt(beta[2]) + 1n}-dev.1`;
     else if (release) version = `${release[1]}.${release[2]}.${BigInt(release[3]) + 1n}-beta.1-dev.1`;
     else throw new Error(`Cannot create a dev build from version ${packageVersion}`);
-  } else {
+  } else if (!preserve) {
     const development = DEVELOPMENT.exec(packageVersion);
     const betaDevelopment = BETA_DEVELOPMENT.exec(packageVersion);
     const beta = BETA.exec(packageVersion);

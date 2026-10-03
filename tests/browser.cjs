@@ -59,12 +59,20 @@ function fixtureData() {
         if (!customElements.get(name)) customElements.define(name, class extends HTMLElement {});
       }
       const panel = document.querySelector("wiser-hub-panel");
-      const devices = [{
-        id:"device-a",
-        config_entries:["hub-a"],
-        manufacturer:"Drayton",
-        model:"HubR",
-      }];
+      const devices = [
+        {
+          id:"device-a",
+          config_entries:["hub-a"],
+          manufacturer:"Drayton",
+          model:"HubR",
+        },
+        {
+          id:"device-b",
+          config_entries:["hub-b"],
+          manufacturer:"Drayton",
+          model:"HubR",
+        },
+      ];
       const hass = {
         language:"en-GB",
         locale:{language:"en-GB"},
@@ -79,12 +87,27 @@ function fixtureData() {
         callService:async () => {},
       };
       panel.hass = hass;
-      panel.panel = {config:{hubs:["Home"], hub_ids:{Home:"hub-a"}}};
+      panel.panel = {
+        config:{hubs:["Home", "Workshop"], hub_ids:{Home:"hub-a", Workshop:"hub-b"}},
+      };
       window.fixture = {panel, hass};
     }, fixture);
 
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     const panel = page.locator("wiser-hub-panel");
+    const tabs = page.getByRole("tab");
+    assert.equal(await tabs.count(), 2);
+    assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
+    await tabs.nth(0).focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await tabs.nth(1).getAttribute("aria-selected"), "true");
+    assert.equal(
+      await panel.evaluate(element => element.shadowRoot.activeElement?.dataset.hub),
+      "Workshop",
+    );
+    await page.keyboard.press("ArrowLeft");
+    await page.locator("wiser-hub-panel .entity-row").first().waitFor();
+    assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
     assert.ok(await panel.evaluate(element => element.scrollHeight > element.clientHeight));
 
     const firstGroup = page.locator("wiser-hub-panel details.entity-group").first();

@@ -249,6 +249,33 @@ test("renders when a selected hub state changes", () => {
   assert.equal(renders, 1);
 });
 
+test("switches hub tabs with standard keyboard navigation", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  panel._config = {hubs:["Home", "Workshop", "Office"]};
+  panel._hub = "Home";
+  panel._query = "temperature";
+  let histories = 0;
+  let renders = 0;
+  panel._loadHistory = () => { histories += 1; };
+  panel._renderSoon = () => { renders += 1; };
+  let prevented = false;
+  const tab = {dataset:{action:"hub", hub:"Home"}};
+
+  panel._keydown({
+    key:"ArrowLeft",
+    target:{closest:() => tab},
+    preventDefault:() => { prevented = true; },
+  });
+
+  assert.equal(panel._hub, "Office");
+  assert.equal(panel._query, "");
+  assert.equal(panel._pendingHubFocus, "Office");
+  assert.equal(histories, 1);
+  assert.equal(renders, 1);
+  assert.equal(prevented, true);
+});
+
 test("shows switch changes immediately while Home Assistant confirms the service", async () => {
   const {Panel} = setup();
   const panel = new Panel();

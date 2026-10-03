@@ -148,6 +148,7 @@
       this._query = "";
       this._renderFrame = 0;
       this.shadowRoot.addEventListener("click", event => this._click(event));
+      this.shadowRoot.addEventListener("keydown", event => this._keydown(event));
       this.shadowRoot.addEventListener("change", event => this._change(event));
       this.shadowRoot.addEventListener("input", event => {
         if (event.target?.id === "search") {
@@ -265,6 +266,33 @@
     _showOptimistic(entityId, value) {
       this._optimistic.set(entityId, {state:String(value), at:Date.now()});
       this._renderSoon();
+    }
+    _selectHub(hub, focus = false) {
+      if (!this._config?.hubs?.includes(hub)) return;
+      if (focus) this._pendingHubFocus = hub;
+      if (this._hub === hub) {
+        if (focus) this._renderSoon();
+        return;
+      }
+      this._hub = hub;
+      this._query = "";
+      this._loadHistory();
+      this._renderSoon();
+    }
+    _keydown(event) {
+      const tab = event.target.closest?.('[role="tab"][data-action="hub"]');
+      if (!tab) return;
+      const hubs = this._config?.hubs || [];
+      const index = hubs.indexOf(tab.dataset.hub);
+      if (index < 0) return;
+      let next;
+      if (event.key === "ArrowRight") next = (index + 1) % hubs.length;
+      else if (event.key === "ArrowLeft") next = (index + hubs.length - 1) % hubs.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = hubs.length - 1;
+      else return;
+      event.preventDefault();
+      this._selectHub(hubs[next], true);
     }
     _clearError() {
       this._error = "";
@@ -700,21 +728,28 @@
       }
       .hub-tabs {
         display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
+        min-width: 0;
+        margin-bottom: 18px;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--divider-color);
       }
-      .hub-chip {
-        padding: 8px 14px;
-        border: 1px solid var(--divider-color);
-        border-radius: 999px;
+      .hub-tab {
+        flex: 0 0 auto;
+        min-height: 48px;
+        padding: 0 24px;
+        border: 0;
+        border-bottom: 2px solid transparent;
         color: var(--secondary-text-color);
-        background: var(--card-background-color);
+        background: transparent;
         cursor: pointer;
       }
-      .hub-chip.active {
-        border-color: var(--primary-color);
-        color: var(--text-primary-color,#fff);
-        background: var(--primary-color);
+      .hub-tab[aria-selected="true"] {
+        border-bottom-color: currentColor;
+        color: var(--primary-color);
+      }
+      .hub-tab:focus-visible {
+        outline: 2px solid currentColor;
+        outline-offset: -4px;
       }
       .metrics {
         position: relative;
@@ -1115,8 +1150,8 @@
         .hero-top {
           display: block;
         }
-        .hub-tabs {
-          margin-top: 18px;
+        .hub-tab {
+          padding: 0 12px;
         }
         .metrics {
           grid-template-columns: repeat(2,minmax(0,1fr));
@@ -1169,6 +1204,9 @@
       const search = this.shadowRoot.querySelector?.("#search");
       const searchFocused = Boolean(search && this.shadowRoot.activeElement === search);
       const selection = searchFocused ? [search.selectionStart, search.selectionEnd] : null;
+      const activeElement = this.shadowRoot.activeElement;
+      const focusedHub = this._pendingHubFocus
+        || (activeElement?.dataset?.action === "hub" ? activeElement.dataset.hub : undefined);
       const closedGroupElements = this.shadowRoot.querySelectorAll?.(
         "details.entity-group:not([open])",
       ) || [];
@@ -1199,14 +1237,25 @@
       ].filter(Boolean).join(" · ") || this._t("panel.live_overview");
       const hubTabs = hubs.length > 1 ? `<nav
         class="hub-tabs"
+        role="tablist"
         aria-label="${esc(this._t("panel.wiser_hubs"))}"
       >
-        ${hubs.map(name => `<button
-          class="hub-chip ${name === this._hub ? "active" : ""}"
+        ${hubs.map((name, index) => `<button
+          type="button"
+          id="hub-tab-${index}"
+          class="hub-tab"
+          role="tab"
+          aria-controls="hub-panel-content"
+          aria-selected="${name === this._hub}"
+          tabindex="${name === this._hub ? 0 : -1}"
           data-action="hub"
           data-hub="${esc(name)}"
         >${esc(name)}</button>`).join("")}
       </nav>` : "";
+      const activeHubIndex = Math.max(0, hubs.indexOf(this._hub));
+      const hubPanelAttributes = hubs.length > 1
+        ? ` role="tabpanel" aria-labelledby="hub-tab-${activeHubIndex}"`
+        : "";
       const offlineAlert = summary.offline.length ? `<div class="alert-card error">
         <ha-icon icon="mdi:alert-circle-outline"></ha-icon>
         <span>
@@ -1232,6 +1281,8 @@
           </div>`;
 
       this.shadowRoot.innerHTML = `${this._style()}<div class="page">
+        ${hubTabs}
+        <div id="hub-panel-content"${hubPanelAttributes}>
         <section class="hero">
           <div class="hero-top">
             <div>
@@ -1239,7 +1290,6 @@
               <h1>${esc(this._hub || this._t("panel.hub_overview"))}</h1>
               <p class="hub-meta">${esc(hubMetadata)}</p>
             </div>
-            ${hubTabs}
           </div>
           <div class="metrics">
             <div class="metric">
@@ -1287,6 +1337,7 @@
           </span>
         </div>
         ${content}
+        </div>
       </div>`;
       this._hydrateNativeEntityElements();
       for (const group of this.shadowRoot.querySelectorAll?.("details.entity-group") || []) {
@@ -1300,6 +1351,13 @@
         const nextSearch = this.shadowRoot.querySelector("#search");
         nextSearch?.focus({preventScroll:true});
         nextSearch?.setSelectionRange(...selection);
+      }
+      if (focusedHub) {
+        const nextTab = Array.from(
+          this.shadowRoot.querySelectorAll?.('[role="tab"][data-action="hub"]') || [],
+        ).find(tab => tab.dataset.hub === focusedHub);
+        nextTab?.focus({preventScroll:true});
+        this._pendingHubFocus = undefined;
       }
       // Restore the scroll position only after the new DOM has its final shape.
       // Collapsing details above the viewport after restoring scroll allows the
@@ -1335,7 +1393,7 @@
           this._renderSoon();
         }
       } else if (action === "hub") {
-        if (this._hub !== target.dataset.hub) { this._hub = target.dataset.hub; this._query = ""; this._loadHistory(); this._renderSoon(); }
+        this._selectHub(target.dataset.hub);
       } else if (action === "retry") this._discover(true);
       else if (action === "history") {
         event.preventDefault();
