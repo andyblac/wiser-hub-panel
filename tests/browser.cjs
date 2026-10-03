@@ -25,7 +25,7 @@ function fixtureData() {
     add(`sensor.reading_${index}`, index, {friendly_name:`Reading ${index}`});
   }
   for (let index = 0; index < 10; index += 1) {
-    add(`sensor.battery_${index}`, 80 - index, {
+    add(`sensor.battery_${index}`, index === 0 ? 10 : 80 - index, {
       device_class:"battery",
       friendly_name:`Battery ${index}`,
     });
@@ -116,6 +116,22 @@ function fixtureData() {
       ?.getAttribute("aria-selected") === "true");
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
+    const attention = page.getByRole("button", {name:"Show what needs attention"});
+    assert.equal(await attention.locator("strong").textContent(), "1");
+    const attentionDetails = page.locator("wiser-hub-panel #attention-details");
+    assert.equal(await attentionDetails.isHidden(), true);
+    await attention.click();
+    assert.equal(await attentionDetails.isVisible(), true);
+    assert.equal(
+      await panel.evaluate(element => element.shadowRoot.activeElement?.id),
+      "attention-details",
+    );
+    assert.match(
+      await attentionDetails.textContent(),
+      /Battery 0 \(10\)/,
+    );
+    await page.locator('wiser-hub-panel [data-action="attention"]').click();
+    assert.equal(await attentionDetails.isHidden(), true);
     assert.ok(await panel.evaluate(element => element.scrollHeight > element.clientHeight));
 
     const firstGroup = page.locator("wiser-hub-panel details.entity-group").first();

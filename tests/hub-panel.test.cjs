@@ -156,6 +156,7 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
     states:{
       "sensor.temperature":state("sensor.temperature", 20, {device_class:"temperature"}),
       "sensor.disabled":state("sensor.disabled", 10),
+      "sensor.room_offline":state("sensor.room_offline", "unavailable", {friendly_name:"Room sensor"}),
       "sensor.other":state("sensor.other", 5),
     },
     callWS:async ({type}) => {
@@ -165,6 +166,7 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
           {entity_id:"sensor.temperature", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
           {entity_id:"sensor.disabled", platform:"wiser", config_entry_id:"hub-a", device_id:"device-a", disabled_by:"integration"},
           {entity_id:"sensor.child", platform:"wiser", config_entry_id:"hub-a", device_id:"device-child"},
+          {entity_id:"sensor.room_offline", platform:"wiser", config_entry_id:"hub-a", device_id:"room-a"},
           {entity_id:"sensor.other", platform:"wiser", config_entry_id:"hub-b", device_id:"device-b"},
           {entity_id:"sensor.foreign", platform:"other", config_entry_id:"hub-a"},
         ],
@@ -195,7 +197,8 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
   assert.equal(summary.rooms.length, 1);
   assert.equal(summary.enabled.length, 1);
   assert.equal(summary.disabled.length, 1);
-  assert.equal(summary.offline.length, 0);
+  assert.equal(summary.offline.length, 1);
+  assert.equal(summary.offline[0].entry.entity_id, "sensor.room_offline");
 });
 
 test("ignores Home Assistant updates unrelated to the selected hub", () => {
@@ -268,6 +271,32 @@ test("renders when a selected hub state changes", () => {
   assert.equal(renders, 1);
 });
 
+test("renders when a child device attention state changes", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const childState = state("switch.smart_plug", "off");
+  const previous = {states:{[childState.entity_id]:childState}};
+  panel._hass = previous;
+  panel._config = {hubs:["Home"], hub_ids:{Home:"hub-a"}};
+  panel._hub = "Home";
+  panel._entries = [
+    {entity_id:childState.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-child"},
+  ];
+  panel._devices = [
+    {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
+    {id:"device-child", config_entries:["hub-a"], via_device_id:"device-a", model:"Smart plug"},
+  ];
+  let renders = 0;
+  panel._renderSoon = () => { renders += 1; };
+
+  panel.hass = {
+    ...previous,
+    states:{...previous.states, [childState.entity_id]:state(childState.entity_id, "unavailable")},
+  };
+
+  assert.equal(renders, 1);
+});
+
 test("switches hub tabs with standard keyboard navigation", () => {
   const {Panel} = setup();
   const panel = new Panel();
@@ -293,6 +322,37 @@ test("switches hub tabs with standard keyboard navigation", () => {
   assert.equal(histories, 1);
   assert.equal(renders, 1);
   assert.equal(prevented, true);
+});
+
+test("toggles attention details from the summary", async () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  let focusOptions;
+  let scrollOptions;
+  const details = {
+    hidden:true,
+    focus:options => { focusOptions = options; },
+    scrollIntoView:options => { scrollOptions = options; },
+  };
+  panel.shadowRoot.querySelector = selector => selector === "#attention-details" ? details : null;
+  const attributes = {};
+  const target = {
+    dataset:{action:"attention"},
+    setAttribute:(name, value) => { attributes[name] = value; },
+  };
+
+  await panel._click({target:{closest:() => target}});
+
+  assert.equal(details.hidden, false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(focusOptions.preventScroll, true);
+  assert.equal(scrollOptions.behavior, "smooth");
+  assert.equal(scrollOptions.block, "nearest");
+
+  await panel._click({target:{closest:() => target}});
+
+  assert.equal(details.hidden, true);
+  assert.equal(attributes["aria-expanded"], "false");
 });
 
 test("downloads diagnostics for the selected hub through a signed path", async () => {

@@ -145,6 +145,7 @@
       this._loading = true;
       this._historyLoading = false;
       this._diagnosticsBusy = false;
+      this._attentionOpen = false;
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
@@ -208,7 +209,7 @@
         || previous.devices !== next.devices
         || previous.areas !== next.areas
       ) return true;
-      return this._hubEntries().some(entry => (
+      return this._attentionEntries().some(entry => (
         previous.states?.[entry.entity_id] !== next.states?.[entry.entity_id]
       ));
     }
@@ -252,6 +253,13 @@
       return this._integrationEntries(includeDisabled)
         .filter(entry => deviceId && entry.device_id === deviceId);
     }
+    _attentionEntries() {
+      const disabledDeviceIds = new Set(
+        this._integrationDevices().filter(device => device.disabled_by).map(device => device.id),
+      );
+      return this._integrationEntries()
+        .filter(entry => !entry.device_id || !disabledDeviceIds.has(entry.device_id));
+    }
     _visibleEntities() {
       const query = this._query.trim().toLocaleLowerCase(this._hass?.locale?.language || this._hass?.language);
       return this._hubEntries()
@@ -280,6 +288,7 @@
       }
       this._hub = hub;
       this._query = "";
+      this._attentionOpen = false;
       this._loadHistory();
       this._renderSoon();
     }
@@ -425,7 +434,8 @@
       const rooms = this._roomDevices();
       const enabled = this._hubEntries();
       const disabled = this._hubEntries(true).filter(entry => entry.disabled_by);
-      const entities = enabled.map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
+      const entities = this._attentionEntries()
+        .map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
         .filter(({state}) => state);
       const offline = entities.filter(({state}) => unavailable(state));
       const batteries = entities.filter(({state}) => (
@@ -839,6 +849,20 @@
       .metric.alert strong {
         color: var(--error-color);
       }
+      button.attention-metric {
+        width: 100%;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      button.attention-metric:hover {
+        border-color: var(--primary-color);
+      }
+      button.attention-metric:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
+      }
       .toolbar {
         display: flex;
         align-items: center;
@@ -880,6 +904,14 @@
         grid-template-columns: repeat(auto-fit,minmax(250px,1fr));
         gap: 10px;
         margin: 18px 0;
+      }
+      .alerts[hidden] {
+        display: none;
+      }
+      .alerts:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 4px;
+        border-radius: 14px;
       }
       .alert-card {
         display: flex;
@@ -1290,8 +1322,12 @@
       const hub = this._hubDevice();
       const hubs = this._config.hubs || [];
       const alertCount = summary.offline.length + summary.batteries.length;
+      if (!alertCount) this._attentionOpen = false;
       const offlineNames = summary.offline
         .map(({entry, state}) => entityName(state, entry, this._hass))
+        .join(", ");
+      const batteryNames = summary.batteries
+        .map(({entry, state}) => `${entityName(state, entry, this._hass)} (${this._formatState(state)})`)
         .join(", ");
       const entityGroups = this._groups(entities);
       const hubMetadata = [
@@ -1342,12 +1378,35 @@
         <ha-icon icon="mdi:battery-alert"></ha-icon>
         <span>
           <strong>${this._plural("panel.low_battery", summary.batteries.length)}</strong><br>
-          <small>${this._t("panel.below_twenty_percent")}</small>
+          <small>${esc(batteryNames)} · ${this._t("panel.below_twenty_percent")}</small>
         </span>
       </div>` : "";
       const alerts = offlineAlert || batteryAlert
-        ? `<div class="alerts">${offlineAlert}${batteryAlert}</div>`
+        ? `<div
+            id="attention-details"
+            class="alerts"
+            role="region"
+            tabindex="-1"
+            aria-label="${esc(this._t("panel.attention_details"))}"
+            ${this._attentionOpen ? "" : "hidden"}
+          >${offlineAlert}${batteryAlert}</div>`
         : "";
+      const attentionMetric = alertCount
+        ? `<button
+            type="button"
+            class="metric attention-metric alert"
+            data-action="attention"
+            aria-controls="attention-details"
+            aria-expanded="${this._attentionOpen}"
+            aria-label="${esc(this._t(this._attentionOpen ? "panel.hide_attention" : "panel.show_attention"))}"
+          >
+            <span class="metric-title">${this._t("panel.needs_attention")}</span>
+            <strong>${alertCount}</strong>
+          </button>`
+        : `<div class="metric">
+            <span class="metric-title">${this._t("panel.needs_attention")}</span>
+            <strong>${alertCount}</strong>
+          </div>`;
       const content = this._loading
         ? `<p class="message">${this._t("panel.discovering_entities")}</p>`
         : `${this._charts()}
@@ -1382,10 +1441,7 @@
               <strong>${summary.enabled.length} / ${summary.disabled.length}</strong>
               <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
             </div>
-            <div class="metric">
-              <span class="metric-title">${this._t("panel.needs_attention")}</span>
-              <strong>${alertCount}</strong>
-            </div>
+            ${attentionMetric}
           </div>
         </section>
         ${this._error ? `<div class="message error" role="alert">
@@ -1470,6 +1526,19 @@
         this._selectHub(target.dataset.hub);
       } else if (action === "diagnostics") {
         await this._downloadDiagnostics();
+      } else if (action === "attention") {
+        const details = this.shadowRoot.querySelector("#attention-details");
+        if (!details) return;
+        this._attentionOpen = details.hidden;
+        details.hidden = !this._attentionOpen;
+        target.setAttribute("aria-expanded", String(this._attentionOpen));
+        target.setAttribute("aria-label", this._t(
+          this._attentionOpen ? "panel.hide_attention" : "panel.show_attention",
+        ));
+        if (this._attentionOpen) {
+          details.focus({preventScroll:true});
+          details.scrollIntoView({behavior:"smooth", block:"nearest"});
+        }
       } else if (action === "retry") this._discover(true);
       else if (action === "history") {
         event.preventDefault();
