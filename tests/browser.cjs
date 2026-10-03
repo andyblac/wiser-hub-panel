@@ -100,12 +100,20 @@ function fixtureData() {
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
     await tabs.nth(0).focus();
     await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => document
+      .querySelector("wiser-hub-panel")
+      ?.shadowRoot.querySelector('[data-hub="Workshop"]')
+      ?.getAttribute("aria-selected") === "true");
     assert.equal(await tabs.nth(1).getAttribute("aria-selected"), "true");
     assert.equal(
       await panel.evaluate(element => element.shadowRoot.activeElement?.dataset.hub),
       "Workshop",
     );
     await page.keyboard.press("ArrowLeft");
+    await page.waitForFunction(() => document
+      .querySelector("wiser-hub-panel")
+      ?.shadowRoot.querySelector('[data-hub="Home"]')
+      ?.getAttribute("aria-selected") === "true");
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
     assert.ok(await panel.evaluate(element => element.scrollHeight > element.clientHeight));

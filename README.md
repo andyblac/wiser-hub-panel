@@ -14,7 +14,7 @@ not register a Lovelace card.
   actions and diagnostics
 - Immediate controls for switches, lights, covers, buttons, selects and numbers
 - 24-hour charts for available numeric Wiser sensors
-- Availability, low-battery and disabled-entity summaries
+- Availability, low-battery, disabled-device and disabled-entity summaries
 - Responsive layouts for desktop and mobile
 
 ## Development

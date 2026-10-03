@@ -169,7 +169,8 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
         ],
         "config/device_registry/list":[
           {id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"},
-          {id:"device-child", config_entries:["hub-a"], via_device_id:"device-a", model:"Smart plug"},
+          {id:"device-child", config_entries:["hub-a"], via_device_id:"device-a", model:"Smart plug", disabled_by:"user"},
+          {id:"room-a", config_entries:["hub-a"], via_device_id:"device-a", identifiers:[["wiser", "Home room 7"]], model:"Room"},
         ],
       })[type];
     },
@@ -185,10 +186,12 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
   assert.deepEqual(Array.from(panel._hubEntries(), entry => entry.entity_id), ["sensor.temperature"]);
   assert.equal(panel._hubEntries(true).length, 2);
   assert.equal(panel._hubDevices().length, 1);
-  assert.equal(panel._integrationDevices().length, 2);
+  assert.equal(panel._integrationDevices().length, 3);
+  assert.equal(panel._roomDevices().length, 1);
   const summary = panel._summary();
-  assert.equal(summary.devices.length, 2);
-  assert.equal(summary.areas.size, 0);
+  assert.equal(summary.devices.length, 3);
+  assert.equal(summary.disabledDevices.length, 1);
+  assert.equal(summary.rooms.length, 1);
   assert.equal(summary.enabled.length, 1);
   assert.equal(summary.disabled.length, 1);
   assert.equal(summary.offline.length, 0);
@@ -222,6 +225,21 @@ test("ignores Home Assistant updates unrelated to the selected hub", () => {
   };
 
   assert.equal(renders, 0);
+});
+
+test("refreshes discovery when Home Assistant registries change", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const entities = {};
+  const devices = {};
+  panel._hass = {states:{}, entities, devices};
+  let forced;
+  panel._discover = force => { forced = force; };
+  panel._renderSoon = () => assert.fail("registry changes should rediscover before rendering");
+
+  panel.hass = {states:{}, entities:{...entities}, devices};
+
+  assert.equal(forced, true);
 });
 
 test("renders when a selected hub state changes", () => {
@@ -358,7 +376,7 @@ test("adds accessible labels to search and history charts", () => {
   assert.match(charts, /class="refresh"[\s\S]*aria-label="Refresh charts"/);
 
   panel._visibleEntities = () => [];
-  panel._summary = () => ({devices:[], areas:new Set(), enabled:[], disabled:[], offline:[], batteries:[]});
+  panel._summary = () => ({devices:[], disabledDevices:[], rooms:[], enabled:[], disabled:[], offline:[], batteries:[]});
   panel._groups = () => "";
   panel._charts = () => "";
   panel._render();
@@ -400,7 +418,7 @@ test("restores scroll only after collapsed sections regain their state", () => {
   panel._hass = {states:{}};
   panel._config = {hubs:[]};
   panel._visibleEntities = () => [];
-  panel._summary = () => ({devices:[], areas:new Set(), enabled:[], disabled:[], offline:[], batteries:[]});
+  panel._summary = () => ({devices:[], disabledDevices:[], rooms:[], enabled:[], disabled:[], offline:[], batteries:[]});
   panel._hubDevice = () => null;
   panel._groups = () => "";
   panel._charts = () => "";

@@ -169,6 +169,9 @@
     set hass(value) {
       const updateAffectsPanel = this._hassUpdateAffectsPanel(this._hass, value);
       const connectionChanged = this._hass?.connection && this._hass.connection !== value?.connection;
+      const registryChanged = Boolean(this._hass && (
+        this._hass.entities !== value?.entities || this._hass.devices !== value?.devices
+      ));
       this._hass = value;
       let optimisticChanged = false;
       for (const [entityId, pending] of this._optimistic) {
@@ -177,7 +180,7 @@
           optimisticChanged = true;
         }
       }
-      if (connectionChanged) this._discover(true);
+      if (connectionChanged || registryChanged) this._discover(true);
       else if (updateAffectsPanel || optimisticChanged) this._renderSoon();
     }
 
@@ -310,6 +313,16 @@
         || devices.find(device => !device.via_device_id);
     }
     _hubDevices() { return this._hubDevice() ? [this._hubDevice()] : []; }
+    _roomDevices() {
+      const prefix = `${this._hub} room `;
+      return this._integrationDevices().filter(device => device.identifiers?.some(identifier => {
+        if (!Array.isArray(identifier) || identifier[0] !== "wiser") return false;
+        const value = identifier[1];
+        return typeof value === "string"
+          && value.startsWith(prefix)
+          && /^\d+$/.test(value.slice(prefix.length));
+      }));
+    }
 
     _chartEntities() {
       return this._hubEntries()
@@ -383,21 +396,19 @@
 
     _summary() {
       const devices = this._integrationDevices();
+      const disabledDevices = devices.filter(device => device.disabled_by);
+      const rooms = this._roomDevices();
       const enabled = this._hubEntries();
       const disabled = this._hubEntries(true).filter(entry => entry.disabled_by);
       const entities = enabled.map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
         .filter(({state}) => state);
-      const areas = new Set([
-        ...this._integrationEntries().map(entry => entry.area_id),
-        ...devices.map(device => device.area_id),
-      ].filter(Boolean));
       const offline = entities.filter(({state}) => unavailable(state));
       const batteries = entities.filter(({state}) => (
         deviceClass(state) === "battery"
         && numeric(state)
         && Number(state.state) < 20
       ));
-      return {devices, areas, enabled, disabled, offline, batteries};
+      return {devices, disabledDevices, rooms, enabled, disabled, offline, batteries};
     }
 
     _control(entry, state) {
@@ -755,7 +766,7 @@
         position: relative;
         z-index: 1;
         display: grid;
-        grid-template-columns: repeat(5,minmax(0,1fr));
+        grid-template-columns: repeat(4,minmax(0,1fr));
         gap: 12px;
         margin-top: 26px;
       }
@@ -772,8 +783,19 @@
         font-weight: 600;
       }
       .metric span {
+        display: block;
         color: var(--secondary-text-color);
         font-size: 12px;
+      }
+      .metric .metric-title {
+        margin-bottom: 4px;
+        color: var(--primary-text-color);
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .metric-detail {
+        min-height: 1em;
+        margin-top: 2px;
       }
       .metric.alert strong {
         color: var(--error-color);
@@ -1133,7 +1155,7 @@
       }
       @media (max-width: 1000px) {
         .metrics {
-          grid-template-columns: repeat(3,minmax(0,1fr));
+          grid-template-columns: repeat(2,minmax(0,1fr));
         }
         .charts {
           grid-template-columns: repeat(2,minmax(0,1fr));
@@ -1157,7 +1179,7 @@
           grid-template-columns: repeat(2,minmax(0,1fr));
           gap: 8px;
         }
-        .metric:last-child {
+        .metric:last-child:nth-child(odd) {
           grid-column: 1/-1;
         }
         .toolbar {
@@ -1293,24 +1315,22 @@
           </div>
           <div class="metrics">
             <div class="metric">
-              <strong>${summary.devices.length}</strong>
-              <span>${this._t(pluralKey("panel.device", summary.devices.length, this._hass))}</span>
+              <span class="metric-title">${this._t(pluralKey("panel.room", summary.rooms.length, this._hass))}</span>
+              <strong>${summary.rooms.length}</strong>
+            </div>
+            <div class="metric device-metric">
+              <span class="metric-title">${this._t(pluralKey("panel.device", summary.devices.length, this._hass))}</span>
+              <strong>${summary.devices.length - summary.disabledDevices.length} / ${summary.disabledDevices.length}</strong>
+              <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
             </div>
             <div class="metric">
-              <strong>${summary.areas.size}</strong>
-              <span>${this._t(pluralKey("panel.area", summary.areas.size, this._hass))}</span>
+              <span class="metric-title">${this._t("panel.entities")}</span>
+              <strong>${summary.enabled.length} / ${summary.disabled.length}</strong>
+              <span class="metric-detail">${this._t("panel.enabled_disabled")}</span>
             </div>
             <div class="metric">
-              <strong>${summary.enabled.length}</strong>
-              <span>${this._t("panel.enabled_entities")}</span>
-            </div>
-            <div class="metric">
-              <strong>${summary.disabled.length}</strong>
-              <span>${this._t("panel.disabled_entities")}</span>
-            </div>
-            <div class="metric">
+              <span class="metric-title">${this._t("panel.needs_attention")}</span>
               <strong>${alertCount}</strong>
-              <span>${this._t("panel.needs_attention")}</span>
             </div>
           </div>
         </section>
