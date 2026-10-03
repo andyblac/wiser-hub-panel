@@ -76,6 +76,7 @@ function fixtureData() {
       const hass = {
         language:"en-GB",
         locale:{language:"en-GB"},
+        user:{is_admin:true},
         states,
         formatEntityName:state => state.attributes.friendly_name || state.entity_id,
         formatEntityState:state => state.state,
@@ -165,6 +166,16 @@ function fixtureData() {
       "search",
     );
     assert.equal(await page.getByRole("img", {name:/24-hour history for Hub temperature/}).count(), 1);
+    await page.setViewportSize({width:375, height:700});
+    const diagnostics = page.getByRole("button", {name:"Download diagnostics"});
+    const diagnosticsLayout = await diagnostics.evaluate(element => ({
+      width:element.getBoundingClientRect().width,
+      labelDisplay:getComputedStyle(element.querySelector(".diagnostics-label")).display,
+      position:getComputedStyle(element).position,
+    }));
+    assert.equal(diagnosticsLayout.width, 44);
+    assert.equal(diagnosticsLayout.labelDisplay, "none");
+    assert.equal(diagnosticsLayout.position, "absolute");
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

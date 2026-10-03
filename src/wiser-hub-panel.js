@@ -1241,10 +1241,22 @@
           border-radius: 18px;
         }
         .hero-top {
+          min-height: 44px;
           display: block;
         }
         .diagnostics-button {
-          margin-top: 16px;
+          position: absolute;
+          top: 0;
+          right: 0;
+          justify-content: center;
+          width: 44px;
+          height: 44px;
+          min-height: 44px;
+          padding: 0;
+          border-radius: 50%;
+        }
+        .diagnostics-label {
+          display: none;
         }
         .hub-tab {
           padding: 0 12px;
@@ -1340,10 +1352,11 @@
             type="button"
             class="diagnostics-button"
             data-action="diagnostics"
+            aria-label="${esc(this._t("panel.download_diagnostics"))}"
             ${this._diagnosticsBusy ? 'disabled aria-busy="true"' : ""}
           >
             <ha-icon icon="mdi:download"></ha-icon>
-            ${this._t("panel.download_diagnostics")}
+            <span class="diagnostics-label">${this._t("panel.download_diagnostics")}</span>
           </button>`
         : "";
       const hubTabs = hubs.length > 1 ? `<nav
