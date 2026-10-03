@@ -95,6 +95,7 @@ test("uses Home Assistant's native entity name and state formatters", () => {
   );
   panel._hydrateNativeEntityElements();
   assert.equal(icon.stateObj, entity);
+  assert.equal(icon.stateColor, true);
   assert.equal(display.stateObj, entity);
   assert.equal(display.hass, panel._hass);
 });

@@ -648,6 +648,7 @@
     _hydrateNativeEntityElements() {
       for (const icon of this.shadowRoot.querySelectorAll?.("[data-state-icon]") || []) {
         icon.stateObj = this._displayState(icon.dataset.stateIcon);
+        icon.stateColor = true;
       }
       for (const display of this.shadowRoot.querySelectorAll?.("[data-state-display]") || []) {
         display.hass = this._hass;
@@ -1002,12 +1003,12 @@
         display: grid;
         place-items: center;
         border-radius: 12px;
-        color: var(--primary-color);
         background: color-mix(in srgb,var(--primary-color) 14%,transparent);
       }
       .group-icon {
         width: 42px;
         height: 42px;
+        color: var(--primary-color);
       }
       .entity-group summary strong, .entity-group summary small {
         display: block;
