@@ -3,6 +3,7 @@ const path = require("node:path");
 const {chromium} = require("playwright");
 
 const root = path.resolve(__dirname, "..");
+const packageVersion = require(path.join(root, "package.json")).version;
 
 function fixtureData() {
   const entries = [];
@@ -96,16 +97,26 @@ function fixtureData() {
         states,
         formatEntityName:state => state.attributes.friendly_name || state.entity_id,
         formatEntityState:state => state.state,
-        callWS:async ({type}) => ({
-          "config/entity_registry/list":entries,
-          "config/device_registry/list":devices,
-        })[type],
+        callWS:async message => {
+          window.fixtureCalls.push(message);
+          return ({
+            "config/entity_registry/list":entries,
+            "config/device_registry/list":devices,
+            "wiser/panel/configure":{},
+          })[message.type];
+        },
         callApi:async () => [],
         callService:async () => {},
       };
+      window.fixtureCalls = [];
       panel.hass = hass;
       panel.panel = {
-        config:{hubs:["Home", "Workshop"], hub_ids:{Home:"hub-a", Workshop:"hub-b"}},
+        config:{
+          panel_id:"registry-panel",
+          hubs:["Home", "Workshop"],
+          hub_ids:{Home:"hub-a", Workshop:"hub-b"},
+          card_configs:{},
+        },
       };
       window.moreInfoEntity = null;
       panel.addEventListener("hass-more-info", event => {
@@ -214,11 +225,83 @@ function fixtureData() {
     const diagnosticsLayout = await diagnostics.evaluate(element => ({
       width:element.getBoundingClientRect().width,
       labelDisplay:getComputedStyle(element.querySelector(".diagnostics-label")).display,
-      position:getComputedStyle(element).position,
+      actionsPosition:getComputedStyle(element.parentElement).position,
     }));
     assert.equal(diagnosticsLayout.width, 44);
     assert.equal(diagnosticsLayout.labelDisplay, "none");
-    assert.equal(diagnosticsLayout.position, "absolute");
+    assert.equal(diagnosticsLayout.actionsPosition, "absolute");
+
+    assert.equal(await page.locator('wiser-hub-panel [data-action="settings"]').count(), 0);
+    await panel.evaluate(element => element._openEditor());
+    const editor = page.locator("wiser-hub-panel #config-dialog");
+    assert.equal(await editor.evaluate(element => element.open), true);
+    assert.ok((await editor.textContent()).includes(`Wiser Hub Panel · ${packageVersion}`));
+    assert.equal(await editor.locator(".hub-editor").count(), 2);
+    assert.deepEqual(
+      await editor.locator(".hub-editor > h2").allTextContents(),
+      ["Home", "Workshop"],
+    );
+    const editorHubTabs = editor.getByRole("tab");
+    assert.equal(await editorHubTabs.count(), 2);
+    assert.equal(await editorHubTabs.nth(0).getAttribute("aria-selected"), "true");
+    assert.equal(await editor.locator('.hub-editor[data-hub="Home"]').isVisible(), true);
+    assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').isVisible(), false);
+    await editor.locator(".config-editor").evaluate(element => { element.scrollTop = 100; });
+    await editorHubTabs.nth(1).click();
+    assert.equal(await editorHubTabs.nth(1).getAttribute("aria-selected"), "true");
+    assert.equal(await editor.locator(".config-editor").evaluate(element => element.scrollTop), 0);
+    assert.equal(await editor.locator('.hub-editor[data-hub="Home"]').isVisible(), false);
+    assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').isVisible(), true);
+    await editorHubTabs.nth(0).click();
+    assert.equal(await editor.locator('[data-action="editor-cancel"]').evaluate(element => element.tagName), "HA-BUTTON");
+    assert.equal(await editor.locator('[data-action="editor-cancel"]').getAttribute("appearance"), "plain");
+    assert.equal(await editor.locator('[data-action="editor-save"]').evaluate(element => element.tagName), "HA-BUTTON");
+    assert.equal(
+      await editor.locator('[data-action="visibility-section"]').first().evaluate(element => element.tagName),
+      "HA-SWITCH",
+    );
+    assert.equal(await editor.locator('ha-checkbox[data-action="visibility-section"]').count(), 0);
+    const editorOverflow = await editor.locator(".config-editor").evaluate(element => ({
+      clientWidth:element.clientWidth,
+      scrollWidth:element.scrollWidth,
+      overflowX:getComputedStyle(element).overflowX,
+    }));
+    assert.equal(editorOverflow.overflowX, "hidden");
+    assert.ok(editorOverflow.scrollWidth <= editorOverflow.clientWidth);
+    assert.equal(await editor.locator(".dialog-actions .editor-version").count(), 1);
+    const entitySections = editor.locator(".entity-visibility-section");
+    assert.ok(await entitySections.count() >= 3);
+    assert.equal(await entitySections.first().evaluate(element => element.tagName), "HA-EXPANSION-PANEL");
+    assert.equal(await entitySections.evaluateAll(elements => elements.every(element => element.expanded === false)), true);
+    assert.equal(
+      await editor.locator('[data-action="visibility-entity"][data-value="sensor.reading_0"]')
+        .evaluate(element => element.closest(".entity-visibility-section")?.dataset.group),
+      "sensors",
+    );
+    await page.evaluate(() => {
+      const {panel, hass} = window.fixture;
+      window.fixtureEditor = panel.shadowRoot.querySelector("#config-dialog");
+      panel.hass = {...hass, states:{...hass.states}};
+    });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await editor.evaluate(element => element === window.fixtureEditor), true);
+    assert.equal(await editor.evaluate(element => element.open), true);
+    for (const selector of [
+      '[data-action="visibility-section"][data-hub="Home"][data-value="controls"]',
+      '[data-action="visibility-entity"][data-hub="Home"][data-value="sensor.reading_0"]',
+    ]) {
+      await editor.locator(selector).evaluate(element => {
+        element.checked = false;
+        element.dispatchEvent(new Event("change", {bubbles:true}));
+      });
+    }
+    await editor.locator('[data-action="editor-save"]').click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.type === "wiser/panel/configure"));
+    const saved = await page.evaluate(() => window.fixtureCalls.find(call => call.type === "wiser/panel/configure"));
+    assert.equal(saved.panel_id, "registry-panel");
+    assert.deepEqual(saved.configs.Home.hidden_sections, ["controls"]);
+    assert.deepEqual(saved.configs.Home.hidden_entities, ["sensor.reading_0"]);
+    assert.deepEqual(saved.configs.Workshop, {});
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

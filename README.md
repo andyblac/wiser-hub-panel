@@ -15,6 +15,7 @@ not register a Lovelace card.
 - Immediate controls for switches, lights, covers, buttons, selects and numbers
 - 24-hour charts for available numeric Wiser sensors
 - Availability, low-battery, disabled-device and disabled-entity summaries
+- Administrator visual editor for per-hub section and entity visibility
 - Responsive layouts for desktop and mobile
 
 ## Development

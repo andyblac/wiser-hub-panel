@@ -4,12 +4,14 @@
   const TRANSLATIONS = __WISER_HUB_TRANSLATIONS__;
   const NATIVE_KEYS = {
     "common.close":"ui.common.close",
+    "common.cancel":"ui.common.cancel",
     "common.details":"ui.common.details",
     "common.loading":"ui.init.loading",
     "common.open":"ui.common.open",
     "common.refresh":"ui.common.refresh",
     "common.retry":"ui.common.retry",
     "common.run":"ui.common.run",
+    "common.save":"ui.common.save",
     "common.stop":"ui.common.stop",
     "panel.unavailable":"state.default.unavailable",
   };
@@ -137,6 +139,8 @@
     constructor() {
       super();
       this.attachShadow({mode:"open"});
+      this.shadowRoot.innerHTML = `<div id="panel-content"></div>
+        <ha-dialog id="config-dialog" width="medium"></ha-dialog>`;
       this._entries = [];
       this._devices = [];
       this._history = new Map();
@@ -148,6 +152,11 @@
       this._attentionOpen = false;
       this._disabledDevicesOpen = false;
       this._disabledEntitiesOpen = false;
+      this._editorOpen = false;
+      this._editorDrafts = null;
+      this._editorHub = null;
+      this._editorError = "";
+      this._savingSettings = false;
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
@@ -160,6 +169,9 @@
           this._renderSoon();
         }
       });
+      const configDialog = this.shadowRoot.querySelector?.("#config-dialog");
+      configDialog?.addEventListener("closed", () => this._closeEditor());
+      configDialog?.addEventListener("close-dialog", () => this._closeEditor());
     }
 
     set panel(value) {
@@ -244,16 +256,36 @@
       }
     }
 
-    _hubId() { return this._config?.hub_ids?.[this._hub]; }
-    _integrationEntries(includeDisabled = false) {
-      const hubId = this._hubId();
+    _hubId(hub = this._hub) { return this._config?.hub_ids?.[hub]; }
+    _integrationEntries(includeDisabled = false, hub = this._hub) {
+      const hubId = this._hubId(hub);
       return this._entries.filter(entry => (!hubId || entry.config_entry_id === hubId)
         && (includeDisabled || !entry.disabled_by));
     }
-    _hubEntries(includeDisabled = false) {
-      const deviceId = this._hubDevice()?.id;
-      return this._integrationEntries(includeDisabled)
+    _hubEntries(includeDisabled = false, hub = this._hub) {
+      const deviceId = this._hubDevice(hub)?.id;
+      return this._integrationEntries(includeDisabled, hub)
         .filter(entry => deviceId && entry.device_id === deviceId);
+    }
+    _hubSettings(hub = this._hub) {
+      return this._config?.card_configs?.[hub] || {};
+    }
+    _hiddenSections() {
+      return new Set(Array.isArray(this._hubSettings().hidden_sections)
+        ? this._hubSettings().hidden_sections
+        : []);
+    }
+    _hiddenEntities() {
+      return new Set(Array.isArray(this._hubSettings().hidden_entities)
+        ? this._hubSettings().hidden_entities
+        : []);
+    }
+    _configurableEntities(hub = this._hub) {
+      return this._hubEntries(false, hub)
+        .map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
+        .filter(({state}) => state)
+        .sort((left, right) => entityName(left.state, left.entry, this._hass)
+          .localeCompare(entityName(right.state, right.entry, this._hass), languageFor(this._hass)));
     }
     _attentionEntries() {
       const disabledDeviceIds = new Set(
@@ -267,6 +299,7 @@
       return this._hubEntries()
         .map(entry => ({entry, state:this._displayState(entry.entity_id)}))
         .filter(item => item.state)
+        .filter(({entry}) => !this._hiddenEntities().has(entry.entity_id))
         .filter(({entry, state}) => {
           const searchable = `${entityName(state, entry, this._hass)} ${entry.entity_id} ${state.state}`;
           return !query || searchable.toLocaleLowerCase().includes(query);
@@ -290,6 +323,7 @@
       }
       this._hub = hub;
       this._query = "";
+      this._closeEditor();
       this._attentionOpen = false;
       this._disabledDevicesOpen = false;
       this._disabledEntitiesOpen = false;
@@ -297,7 +331,7 @@
       this._renderSoon();
     }
     _keydown(event) {
-      const tab = event.target.closest?.('[role="tab"][data-action="hub"]');
+      const tab = event.target.closest?.('[role="tab"][data-action]');
       if (!tab) return;
       const hubs = this._config?.hubs || [];
       const index = hubs.indexOf(tab.dataset.hub);
@@ -309,7 +343,11 @@
       else if (event.key === "End") next = hubs.length - 1;
       else return;
       event.preventDefault();
-      this._selectHub(hubs[next], true);
+      if (tab.dataset.action === "editor-hub") {
+        this._selectEditorHub(hubs[next], true);
+      } else if (tab.dataset.action === "hub") {
+        this._selectHub(hubs[next], true);
+      }
     }
     _clearError() {
       this._error = "";
@@ -338,12 +376,12 @@
         this._renderSoon();
       }
     }
-    _integrationDevices() {
-      const hubId = this._hubId();
+    _integrationDevices(hub = this._hub) {
+      const hubId = this._hubId(hub);
       return this._devices.filter(device => !hubId || device.config_entries?.includes(hubId));
     }
-    _hubDevice() {
-      const devices = this._integrationDevices();
+    _hubDevice(hub = this._hub) {
+      const devices = this._integrationDevices(hub);
       return devices.find(device => (
         !device.via_device_id
         && /wiser|drayton|schneider/i.test(`${device.manufacturer || ""} ${device.model || ""}`)
@@ -363,8 +401,10 @@
     }
 
     _chartEntities() {
+      const hiddenEntities = this._hiddenEntities();
       return this._hubEntries()
         .map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
+        .filter(({entry}) => !hiddenEntities.has(entry.entity_id))
         .filter(({entry, state}) => chartable(entry, state))
         .sort((left, right) => {
           const order = ["power", "energy", "temperature", "humidity", "battery", "signal_strength", "pressure", "current", "voltage"];
@@ -448,6 +488,223 @@
         && Number(state.state) < 20
       ));
       return {devices, disabledDevices, rooms, enabled, disabled, offline, batteries};
+    }
+
+    _openEditor() {
+      if (!this._hass?.user?.is_admin || !this._config?.panel_id || !this._config?.hubs?.length) return;
+      const dialog = this.shadowRoot.querySelector?.("#config-dialog");
+      if (dialog?.open) return;
+      this._editorDrafts = Object.fromEntries((this._config.hubs || []).map(hub => {
+        const settings = this._hubSettings(hub);
+        return [hub, {
+          hidden_sections:[...(Array.isArray(settings.hidden_sections) ? settings.hidden_sections : [])],
+          hidden_entities:[...(Array.isArray(settings.hidden_entities) ? settings.hidden_entities : [])],
+        }];
+      }));
+      this._editorHub = this._config.hubs?.includes(this._hub) ? this._hub : this._config.hubs?.[0];
+      this._editorError = "";
+      this._editorOpen = true;
+      this._renderEditor();
+    }
+
+    _closeEditor() {
+      if (!this._editorOpen) return;
+      this._editorOpen = false;
+      this._editorDrafts = null;
+      this._editorHub = null;
+      this._editorError = "";
+      const dialog = this.shadowRoot.querySelector?.("#config-dialog");
+      if (dialog) dialog.open = false;
+    }
+
+    async _saveEditor() {
+      if (!this._editorDrafts || this._savingSettings) return;
+      this._savingSettings = true;
+      this._editorError = "";
+      this._updateEditorState();
+      try {
+        const configs = Object.fromEntries((this._config.hubs || []).map(hub => {
+          const draft = this._editorDrafts[hub];
+          const settings = {...this._hubSettings(hub)};
+          const hiddenSections = [...new Set(draft.hidden_sections)].sort();
+          const hiddenEntities = [...new Set(draft.hidden_entities)].sort();
+          if (hiddenSections.length) settings.hidden_sections = hiddenSections;
+          else delete settings.hidden_sections;
+          if (hiddenEntities.length) settings.hidden_entities = hiddenEntities;
+          else delete settings.hidden_entities;
+          return [hub, settings];
+        }));
+        await this._hass.callWS({
+          type:"wiser/panel/configure",
+          panel_id:this._config.panel_id,
+          configs,
+        });
+        this._config = {
+          ...this._config,
+          card_configs:{...this._config.card_configs, ...configs},
+        };
+        this._closeEditor();
+        this._loadHistory();
+      } catch (error) {
+        this._editorError = this._t("panel.settings_save_error", {error:error.message || error});
+      } finally {
+        this._savingSettings = false;
+        this._updateEditorState();
+      }
+    }
+
+    _editorHubMarkup(hub, index) {
+      const draft = this._editorDrafts?.[hub];
+      if (!draft) return "";
+      const hiddenSections = new Set(draft.hidden_sections);
+      const hiddenEntities = new Set(draft.hidden_entities);
+      const configurableEntities = this._configurableEntities(hub);
+      const entitySections = GROUPS.map(([key, titleKey, icon]) => {
+        const items = configurableEntities.filter(({entry, state}) => groupFor(entry, state) === key);
+        if (!items.length) return "";
+        const rows = items.map(({entry, state}) => `<ha-checkbox
+            class="visibility-row entity-visibility-row"
+            data-action="visibility-entity"
+            data-hub="${esc(hub)}"
+            data-value="${esc(entry.entity_id)}"
+            ${hiddenEntities.has(entry.entity_id) ? "" : "checked"}
+          >
+            <span>
+              ${esc(entityName(state, entry, this._hass))}
+              <small>${esc(entry.entity_id)}</small>
+            </span>
+          </ha-checkbox>`).join("");
+        return `<ha-expansion-panel
+          class="entity-visibility-section"
+          data-group="${esc(key)}"
+          outlined
+        >
+          <ha-icon slot="leading-icon" icon="${icon}"></ha-icon>
+          <div class="entity-section-header" slot="header" role="heading" aria-level="3">
+            <span>${this._t(titleKey)}</span>
+            <small>${items.length} ${this._t(pluralKey("panel.entity", items.length, this._hass))}</small>
+            <ha-switch
+              data-action="visibility-section"
+              data-hub="${esc(hub)}"
+              data-value="${esc(key)}"
+              aria-label="${esc(this._t(titleKey))}"
+              ${hiddenSections.has(key) ? "" : "checked"}
+            ></ha-switch>
+          </div>
+          <div class="visibility-list entity-visibility-list">${rows}</div>
+        </ha-expansion-panel>`;
+      }).join("");
+      return `<section
+          id="editor-hub-panel-${index}"
+          class="hub-editor"
+          data-hub="${esc(hub)}"
+          role="tabpanel"
+          aria-labelledby="editor-hub-tab-${index}"
+          ${hub === this._editorHub ? "" : "hidden"}
+        >
+          <h2>${esc(hub)}</h2>
+          <p>${this._t("panel.settings_description", {hub})}</p>
+          <section>
+            <h3>${this._t("panel.section_visibility")}</h3>
+            <div class="standalone-section-toggle">
+              <ha-icon icon="mdi:chart-line"></ha-icon>
+              <span>${this._t("panel.history_section")}</span>
+              <ha-switch
+                data-action="visibility-section"
+                data-hub="${esc(hub)}"
+                data-value="history"
+                aria-label="${esc(this._t("panel.history_section"))}"
+                ${hiddenSections.has("history") ? "" : "checked"}
+              ></ha-switch>
+            </div>
+          </section>
+          ${entitySections ? `<section>
+            <h3>${this._t("panel.entity_visibility")}</h3>
+            <div class="entity-visibility-sections">${entitySections}</div>
+          </section>` : ""}
+        </section>`;
+    }
+
+    _editorMarkup() {
+      if (!this._editorDrafts) return "";
+      const hubs = this._config.hubs || [];
+      const hubTabs = hubs.length > 1 ? `<nav class="editor-hub-tabs" role="tablist" aria-label="${esc(this._t("panel.wiser_hubs"))}">
+        ${hubs.map((hub, index) => `<button
+          type="button"
+          id="editor-hub-tab-${index}"
+          class="editor-hub-tab"
+          role="tab"
+          aria-controls="editor-hub-panel-${index}"
+          aria-selected="${hub === this._editorHub}"
+          tabindex="${hub === this._editorHub ? 0 : -1}"
+          data-action="editor-hub"
+          data-hub="${esc(hub)}"
+        >${esc(hub)}</button>`).join("")}
+      </nav>` : "";
+      const hubEditors = hubs.map((hub, index) => this._editorHubMarkup(hub, index)).join("");
+      return `<div class="config-editor">
+          ${hubTabs}
+          ${hubEditors}
+          <p class="editor-error" role="alert">${esc(this._editorError)}</p>
+        </div>
+        <div class="dialog-actions" id="editor-actions" slot="footer">
+          <span class="editor-version">Wiser Hub Panel · ${esc(VERSION)}</span>
+          <ha-button appearance="plain" data-action="editor-cancel" ${this._savingSettings ? "disabled" : ""}>
+            ${this._t("common.cancel")}
+          </ha-button>
+          <ha-button data-action="editor-save" ${this._savingSettings ? "disabled" : ""}>
+            ${this._t("common.save")}
+          </ha-button>
+        </div>`;
+    }
+
+    _renderEditor() {
+      const dialog = this.shadowRoot.querySelector?.("#config-dialog");
+      if (!dialog || !this._editorOpen || !this._editorDrafts) return;
+      dialog.innerHTML = this._editorMarkup();
+      dialog.setAttribute("aria-label", this._t("panel.settings"));
+      dialog.setAttribute("header-title", this._t("panel.settings"));
+      dialog.heading = this._t("panel.settings");
+      for (const checkbox of dialog.querySelectorAll?.("ha-checkbox[data-action]") || []) {
+        checkbox.checked = checkbox.hasAttribute("checked");
+      }
+      for (const toggle of dialog.querySelectorAll?.("ha-switch[data-action]") || []) {
+        toggle.checked = toggle.hasAttribute("checked");
+        toggle.addEventListener("click", event => event.stopPropagation());
+      }
+      for (const panel of dialog.querySelectorAll?.("ha-expansion-panel.entity-visibility-section") || []) {
+        panel.expanded = false;
+      }
+      if (!("headerTitle" in (customElements.get("ha-dialog")?.prototype || {}))) {
+        dialog.querySelector?.("#editor-actions")?.removeAttribute("slot");
+      }
+      dialog.open = true;
+    }
+
+    _selectEditorHub(hub, focus = false) {
+      if (!this._editorOpen || !this._config?.hubs?.includes(hub)) return;
+      this._editorHub = hub;
+      for (const tab of this.shadowRoot.querySelectorAll?.('[data-action="editor-hub"]') || []) {
+        const selected = tab.dataset.hub === hub;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected && focus) tab.focus({preventScroll:true});
+      }
+      for (const editor of this.shadowRoot.querySelectorAll?.(".hub-editor") || []) {
+        editor.hidden = editor.dataset.hub !== hub;
+      }
+      const container = this.shadowRoot.querySelector?.(".config-editor");
+      if (container) container.scrollTop = 0;
+    }
+
+    _updateEditorState() {
+      const dialog = this.shadowRoot.querySelector?.("#config-dialog");
+      if (!dialog || !this._editorOpen) return;
+      for (const button of dialog.querySelectorAll?.('[data-action="editor-cancel"], [data-action="editor-save"]') || []) {
+        button.disabled = this._savingSettings;
+      }
+      const error = dialog.querySelector?.(".editor-error");
+      if (error) error.textContent = this._editorError;
     }
 
     _control(entry, state) {
@@ -568,6 +825,7 @@
     }
 
     _charts() {
+      if (this._hiddenSections().has("history")) return "";
       const candidates = this._chartEntities();
       if (!candidates.length) return "";
       return `<details class="charts-section" open>
@@ -641,11 +899,13 @@
     }
 
     _groups(entities) {
+      const hiddenSections = this._hiddenSections();
       const grouped = new Map(GROUPS.map(([key]) => [key, []]));
       for (const item of entities) grouped.get(groupFor(item.entry, item.state)).push(item);
       const columns = [[], []];
       const columnWeights = [0, 0];
       GROUPS.forEach(([key], order) => {
+        if (hiddenSections.has(key)) return;
         const items = grouped.get(key);
         if (!items.length) return;
         const meta = GROUP_META.get(key);
@@ -776,6 +1036,11 @@
       .hub-meta {
         margin: 8px 0 0;
         color: var(--secondary-text-color);
+      }
+      .hero-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
       .diagnostics-button {
         display: flex;
@@ -934,6 +1199,164 @@
       }
       .alert-card.error ha-icon {
         color: var(--error-color);
+      }
+      .config-editor {
+        width: 100%;
+        max-width: 100%;
+        max-height: min(70vh,760px);
+        overflow-x: hidden;
+        overflow-y: auto;
+        color: var(--primary-text-color);
+      }
+      .config-editor > p {
+        margin: 0 0 20px;
+        color: var(--secondary-text-color);
+      }
+      .config-editor h2 {
+        margin: 0 0 12px;
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .editor-hub-tabs {
+        position: sticky;
+        z-index: 2;
+        top: 0;
+        display: flex;
+        min-width: 0;
+        margin: 0 0 20px;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--divider-color);
+        background: var(--primary-background-color, var(--ha-color-surface-default,#fff));
+      }
+      .editor-hub-tab {
+        flex: 0 0 auto;
+        min-height: 48px;
+        padding: 0 20px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        color: var(--secondary-text-color);
+        background: transparent;
+        cursor: pointer;
+      }
+      .editor-hub-tab[aria-selected="true"] {
+        border-bottom-color: var(--primary-color);
+        color: var(--primary-text-color);
+      }
+      .hub-editor > p {
+        margin: 0 0 20px;
+        color: var(--secondary-text-color);
+      }
+      .hub-editor > section + section {
+        margin-top: 24px;
+      }
+      .hub-editor > section > h3 {
+        margin: 0 0 12px;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .entity-visibility-sections {
+        display: grid;
+        gap: 16px;
+        min-width: 0;
+      }
+      .standalone-section-toggle {
+        display: grid;
+        grid-template-columns: auto minmax(0,1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        padding: 12px 14px;
+        border: 1px solid var(--divider-color);
+        border-radius: var(--ha-border-radius-md,12px);
+      }
+      .standalone-section-toggle ha-icon {
+        color: var(--primary-color);
+      }
+      .entity-visibility-section {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        --expansion-panel-content-padding: 0;
+        --ha-card-border-radius: var(--ha-border-radius-md,12px);
+      }
+      .entity-section-header {
+        display: grid;
+        grid-template-columns: minmax(0,1fr) auto auto;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-width: 0;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .entity-visibility-section > ha-icon {
+        color: var(--primary-color);
+      }
+      .entity-section-header small {
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .entity-visibility-section .visibility-list {
+        gap: 0;
+        border-top: 1px solid var(--divider-color);
+      }
+      .entity-visibility-section .visibility-row {
+        border: 0;
+        border-radius: 0;
+      }
+      .entity-visibility-section .visibility-row + .visibility-row {
+        border-top: 1px solid var(--divider-color);
+      }
+      .visibility-list {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+      }
+      .visibility-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        padding: 10px 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .visibility-row span {
+        display: block;
+        overflow: hidden;
+        min-width: 0;
+      }
+      .visibility-row small {
+        display: block;
+        overflow: hidden;
+        margin-top: 2px;
+        color: var(--secondary-text-color);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dialog-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        width: 100%;
+      }
+      .editor-version {
+        margin-right: auto;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+      }
+      .editor-error:empty { display: none; }
+      .editor-error {
+        color: var(--error-color) !important;
       }
       .detail-list {
         display: flex;
@@ -1264,10 +1687,13 @@
           min-height: 44px;
           display: block;
         }
-        .diagnostics-button {
+        .hero-actions {
           position: absolute;
           top: 0;
           right: 0;
+        }
+        .diagnostics-button {
+          position: static;
           justify-content: center;
           width: 44px;
           height: 44px;
@@ -1278,6 +1704,7 @@
         .diagnostics-label {
           display: none;
         }
+        .editor-version { max-width: 42%; }
         .hub-tab {
           padding: 0 12px;
         }
@@ -1344,7 +1771,8 @@
       const charts = this.shadowRoot.querySelector?.("details.charts-section");
       const chartsOpen = charts ? charts.open : true;
       if (!this._hass || !this._config) {
-        this.shadowRoot.innerHTML = `${this._style()}<p class="message">
+        const panelContent = this.shadowRoot.querySelector?.("#panel-content") || this.shadowRoot;
+        panelContent.innerHTML = `${this._style()}<p class="message">
           ${this._t("panel.loading")}
         </p>`;
         return;
@@ -1398,6 +1826,9 @@
             <ha-icon icon="mdi:download"></ha-icon>
             <span class="diagnostics-label">${this._t("panel.download_diagnostics")}</span>
           </button>`
+        : "";
+      const heroActions = diagnosticsButton
+        ? `<div class="hero-actions">${diagnosticsButton}</div>`
         : "";
       const hubTabs = hubs.length > 1 ? `<nav
         class="hub-tabs"
@@ -1532,10 +1963,11 @@
         ? `<p class="message">${this._t("panel.discovering_entities")}</p>`
         : `${this._charts()}
           <div class="groups">
-            ${entityGroups || `<p class="empty">${this._t("panel.empty")}</p>`}
+            ${entityGroups || (!entities.length ? `<p class="empty">${this._t("panel.empty")}</p>` : "")}
           </div>`;
 
-      this.shadowRoot.innerHTML = `${this._style()}<div class="page">
+      const panelContent = this.shadowRoot.querySelector?.("#panel-content") || this.shadowRoot;
+      panelContent.innerHTML = `${this._style()}<div class="page">
         ${hubTabs}
         <div id="hub-panel-content"${hubPanelAttributes}>
         <section class="hero">
@@ -1545,7 +1977,7 @@
               <h1>${esc(this._hub || this._t("panel.hub_overview"))}</h1>
               <p class="hub-meta">${esc(hubMetadata)}</p>
             </div>
-            ${diagnosticsButton}
+            ${heroActions}
           </div>
           <div class="metrics">
             <div class="metric">
@@ -1641,6 +2073,12 @@
         this._selectHub(target.dataset.hub);
       } else if (action === "diagnostics") {
         await this._downloadDiagnostics();
+      } else if (action === "editor-hub") {
+        this._selectEditorHub(target.dataset.hub);
+      } else if (action === "editor-cancel") {
+        this._closeEditor();
+      } else if (action === "editor-save") {
+        await this._saveEditor();
       } else if (["attention", "disabled-devices", "disabled-entities"].includes(action)) {
         const toggles = {
           attention:["#attention-details", "_attentionOpen", "panel.show_attention", "panel.hide_attention"],
@@ -1668,6 +2106,18 @@
 
     async _change(event) {
       const target = event.target;
+      if (["visibility-section", "visibility-entity"].includes(target.dataset.action)) {
+        const draft = this._editorDrafts?.[target.dataset.hub];
+        if (!draft) return;
+        const property = target.dataset.action === "visibility-section"
+          ? "hidden_sections"
+          : "hidden_entities";
+        const hidden = new Set(draft[property]);
+        if (target.checked) hidden.delete(target.dataset.value);
+        else hidden.add(target.dataset.value);
+        draft[property] = [...hidden];
+        return;
+      }
       if (!["select", "number"].includes(target.dataset.action)) return;
       const entityId = target.dataset.entity;
       if (this._busy.has(entityId)) return;

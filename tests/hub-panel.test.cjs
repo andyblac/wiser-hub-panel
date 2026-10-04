@@ -456,6 +456,64 @@ test("clears a stale error after a successful value update", async () => {
   assert.equal(panel._error, "");
 });
 
+test("applies per-hub section and entity visibility settings", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const temperature = state("sensor.temperature", 20, {device_class:"temperature"});
+  const output = state("switch.output", "off");
+  panel._hass = {states:{[temperature.entity_id]:temperature, [output.entity_id]:output}};
+  panel._config = {
+    hubs:["Home"],
+    hub_ids:{Home:"hub-a"},
+    card_configs:{Home:{hidden_sections:["history", "controls"], hidden_entities:[output.entity_id]}},
+  };
+  panel._hub = "Home";
+  panel._entries = [
+    {entity_id:temperature.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+    {entity_id:output.entity_id, platform:"wiser", config_entry_id:"hub-a", device_id:"device-a"},
+  ];
+  panel._devices = [{id:"device-a", config_entries:["hub-a"], manufacturer:"Drayton", model:"HubR"}];
+
+  assert.deepEqual(Array.from(panel._visibleEntities(), item => item.entry.entity_id), [temperature.entity_id]);
+  assert.equal(panel._charts(), "");
+  assert.equal(panel._groups([{entry:panel._entries[1], state:output}]), "");
+});
+
+test("saves visual visibility settings through the shared panel API", async () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  let request;
+  panel._hass = {callWS:async message => { request = message; }};
+  panel._config = {
+    panel_id:"registry-panel",
+    hubs:["Home", "Workshop"],
+    card_configs:{Home:{existing:true}, Workshop:{layout:"compact"}},
+  };
+  panel._hub = "Home";
+  panel._editorOpen = true;
+  panel._editorDrafts = {
+    Home:{hidden_sections:["controls"], hidden_entities:["sensor.hidden"]},
+    Workshop:{hidden_sections:["history"], hidden_entities:[]},
+  };
+  panel._loadHistory = () => {};
+  panel._renderSoon = () => {};
+
+  await panel._saveEditor();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(request)), {
+    type:"wiser/panel/configure",
+    panel_id:"registry-panel",
+    configs:{
+      Home:{existing:true, hidden_sections:["controls"], hidden_entities:["sensor.hidden"]},
+      Workshop:{layout:"compact", hidden_sections:["history"]},
+    },
+  });
+  assert.equal(panel._config.card_configs.Home.existing, true);
+  assert.equal(panel._config.card_configs.Workshop.layout, "compact");
+  assert.equal(panel._editorOpen, false);
+  assert.equal(panel._editorDrafts, null);
+});
+
 test("adds accessible labels to search and history charts", () => {
   const {Panel} = setup();
   const panel = new Panel();
