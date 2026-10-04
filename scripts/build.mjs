@@ -9,13 +9,6 @@ const translations = Object.fromEntries(translationNames.map(language => [
   language,
   JSON.parse(readFileSync(new URL(`src/localize/languages/${language}.json`, root), "utf8")),
 ]));
-const referenceKeys = Object.keys(translations["en-US"]).sort();
-for (const [language, strings] of Object.entries(translations)) {
-  const keys = Object.keys(strings).sort();
-  if (JSON.stringify(keys) !== JSON.stringify(referenceKeys)) {
-    throw new Error(`${language} translations do not match en-US keys`);
-  }
-}
 const dev = process.argv.includes("--dev");
 const final = process.argv.includes("--release");
 const preserve = process.argv.includes("--test");

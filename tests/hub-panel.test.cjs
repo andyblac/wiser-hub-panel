@@ -63,6 +63,7 @@ test("localizes panel labels from Home Assistant's language", () => {
   assert.equal(helpers.languageFor({locale:{language:"en-GB"}}), "en-GB");
   assert.equal(helpers.languageFor({language:"fr-FR"}), "fr");
   assert.equal(helpers.languageFor({language:"de-DE"}), "de");
+  assert.equal(helpers.localize("panel.needs_attention", {language:"en-GB"}), "Needs attention");
   assert.equal(helpers.localize("panel.at_a_glance", {language:"fr"}), "Vue d’ensemble");
   assert.equal(helpers.localize("group.controls", {language:"de"}), "Hub-Steuerung");
   assert.equal(helpers.localize("panel.at_a_glance", {language:"es"}), "At a glance");
