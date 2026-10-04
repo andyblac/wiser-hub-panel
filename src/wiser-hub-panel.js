@@ -6,16 +6,25 @@
   const relativeTimeFormatters = new Map();
   const numberFormatters = new Map();
   const NATIVE_KEYS = {
-    "common.close":"ui.common.close",
+    "common.close":"ui.card.cover.close_cover",
     "common.cancel":"ui.common.cancel",
-    "common.details":"ui.common.details",
+    "common.details":"ui.dialogs.more_info_control.details",
     "common.loading":"ui.init.loading",
-    "common.open":"ui.common.open",
+    "common.open":"ui.card.cover.open_cover",
     "common.refresh":"ui.common.refresh",
-    "common.retry":"ui.common.retry",
-    "common.run":"ui.common.run",
+    "common.retry":"ui.panel.app.retry",
+    "common.run":"ui.card.service.run",
     "common.save":"ui.common.save",
-    "common.stop":"ui.common.stop",
+    "common.stop":"ui.card.cover.stop_cover",
+    "common.turn_off":"ui.card.common.turn_off",
+    "common.turn_on":"ui.card.common.turn_on",
+    "group.energy":"panel.energy",
+    "group.sensors":"ui.panel.config.devices.entities.sensor",
+    "panel.device_one":"ui.panel.config.devices.type.device_heading",
+    "panel.device_other":"ui.panel.config.devices.caption",
+    "panel.download_diagnostics":"ui.panel.config.devices.download_diagnostics",
+    "panel.entities":"ui.panel.config.devices.entities.entities",
+    "panel.entity_visibility":"ui.panel.config.devices.entities.entities",
     "panel.unavailable":"state.default.unavailable",
   };
 

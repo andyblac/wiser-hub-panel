@@ -67,10 +67,32 @@ test("localizes panel labels from Home Assistant's language", () => {
   assert.equal(helpers.localize("panel.at_a_glance", {language:"fr"}), "Vue d’ensemble");
   assert.equal(helpers.localize("group.controls", {language:"de"}), "Hub-Steuerung");
   assert.equal(helpers.localize("panel.at_a_glance", {language:"es"}), "At a glance");
-  assert.equal(helpers.localize("common.retry", {
-    language:"fr",
-    localize:key => key === "ui.common.retry" ? "Traduction native" : key,
-  }), "Traduction native");
+  const nativeKeys = {
+    "common.close":"ui.card.cover.close_cover",
+    "common.cancel":"ui.common.cancel",
+    "common.details":"ui.dialogs.more_info_control.details",
+    "common.loading":"ui.init.loading",
+    "common.open":"ui.card.cover.open_cover",
+    "common.refresh":"ui.common.refresh",
+    "common.retry":"ui.panel.app.retry",
+    "common.run":"ui.card.service.run",
+    "common.save":"ui.common.save",
+    "common.stop":"ui.card.cover.stop_cover",
+    "common.turn_off":"ui.card.common.turn_off",
+    "common.turn_on":"ui.card.common.turn_on",
+    "group.energy":"panel.energy",
+    "group.sensors":"ui.panel.config.devices.entities.sensor",
+    "panel.device_one":"ui.panel.config.devices.type.device_heading",
+    "panel.device_other":"ui.panel.config.devices.caption",
+    "panel.download_diagnostics":"ui.panel.config.devices.download_diagnostics",
+    "panel.entities":"ui.panel.config.devices.entities.entities",
+    "panel.entity_visibility":"ui.panel.config.devices.entities.entities",
+    "panel.unavailable":"state.default.unavailable",
+  };
+  const nativeHass = {language:"fr", localize:key => `native:${key}`};
+  for (const [key, nativeKey] of Object.entries(nativeKeys)) {
+    assert.equal(helpers.localize(key, nativeHass), `native:${nativeKey}`);
+  }
 });
 
 test("uses Home Assistant's native entity name and state formatters", () => {
