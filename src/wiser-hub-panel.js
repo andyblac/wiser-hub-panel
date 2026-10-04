@@ -2,6 +2,9 @@
 (() => {
   const VERSION = "__WISER_HUB_PANEL_VERSION__";
   const TRANSLATIONS = __WISER_HUB_TRANSLATIONS__;
+  const pluralFormatters = new Map();
+  const relativeTimeFormatters = new Map();
+  const numberFormatters = new Map();
   const NATIVE_KEYS = {
     "common.close":"ui.common.close",
     "common.cancel":"ui.common.cancel",
@@ -40,7 +43,11 @@
   }
 
   function pluralKey(prefix, count, hass) {
-    const form = new Intl.PluralRules(languageFor(hass)).select(count) === "one" ? "one" : "other";
+    const language = languageFor(hass);
+    if (!pluralFormatters.has(language)) {
+      pluralFormatters.set(language, new Intl.PluralRules(language));
+    }
+    const form = pluralFormatters.get(language).select(count) === "one" ? "one" : "other";
     return `${prefix}_${form}`;
   }
   const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -69,7 +76,11 @@
     const date = value ? new Date(value) : null;
     if (!date || !Number.isFinite(date.getTime())) return "";
     const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
-    const formatter = new Intl.RelativeTimeFormat(languageFor(hass), {numeric:"auto"});
+    const language = languageFor(hass);
+    if (!relativeTimeFormatters.has(language)) {
+      relativeTimeFormatters.set(language, new Intl.RelativeTimeFormat(language, {numeric:"auto"}));
+    }
+    const formatter = relativeTimeFormatters.get(language);
     if (seconds < 60) return formatter.format(0, "second");
     if (seconds < 3600) return formatter.format(-Math.floor(seconds / 60), "minute");
     if (seconds < 86400) return formatter.format(-Math.floor(seconds / 3600), "hour");
@@ -87,6 +98,8 @@
     ["diagnostics", "group.diagnostics", "mdi:stethoscope"],
     ["system", "group.system", "mdi:hub-outline"],
   ];
+  const GROUP_KEYS = GROUPS.map(([key]) => key);
+  const GROUP_KEY_SET = new Set(GROUP_KEYS);
   const GROUP_META = new Map(GROUPS.map(([key, titleKey, icon]) => [key, {titleKey, icon}]));
   const ENERGY_CLASSES = new Set(["power", "energy", "current", "voltage", "power_factor", "gas", "water"]);
   const ENVIRONMENT_CLASSES = new Set(["temperature", "humidity", "pressure", "illuminance", "moisture", "volatile_organic_compounds"]);
@@ -161,6 +174,8 @@
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
+      this._configFingerprint = "";
+      this._registryLoaded = false;
       this.shadowRoot.addEventListener("click", event => this._click(event));
       this.shadowRoot.addEventListener("keydown", event => this._keydown(event));
       this.shadowRoot.addEventListener("change", event => this._change(event));
@@ -178,13 +193,18 @@
 
     set panel(value) {
       const config = value?.config || {};
+      const fingerprint = JSON.stringify(config);
+      const changed = fingerprint !== this._configFingerprint;
       this._config = config;
+      this._configFingerprint = fingerprint;
       const hubs = Array.isArray(config.hubs) ? config.hubs : [];
       if (!hubs.includes(this._hub)) this._hub = hubs[0];
-      this._discover();
+      if (changed) this._registryLoaded = false;
+      if (!this._registryLoaded) this._discover();
     }
 
     set hass(value) {
+      const firstHass = !this._hass;
       const updateAffectsPanel = this._hassUpdateAffectsPanel(this._hass, value);
       const connectionChanged = this._hass?.connection && this._hass.connection !== value?.connection;
       const registryChanged = Boolean(this._hass && (
@@ -198,13 +218,17 @@
           optimisticChanged = true;
         }
       }
-      if (connectionChanged || registryChanged) this._discover(true);
+      if (connectionChanged || registryChanged) {
+        this._registryLoaded = false;
+        this._discover(true);
+      } else if (firstHass && !this._registryLoaded && this._config) this._discover();
       else if (updateAffectsPanel || optimisticChanged) this._renderSoon();
     }
 
     connectedCallback() { this._renderSoon(); }
     disconnectedCallback() {
       if (this._renderFrame) cancelAnimationFrame(this._renderFrame);
+      this._renderFrame = 0;
       this._captureSectionState();
     }
 
@@ -249,12 +273,13 @@
         if (generation !== this._discoveryGeneration) return;
         this._entries = entries.filter(entry => entry.platform === "wiser");
         this._devices = devices;
+        this._registryLoaded = true;
         this._loading = false;
         this._loadHistory();
       } catch (error) {
         if (generation !== this._discoveryGeneration) return;
         this._loading = false;
-      this._error = this._t("panel.discovery_error", {error:error.message || error});
+        this._error = this._t("panel.discovery_error", {error:error.message || error});
       } finally {
         if (generation === this._discoveryGeneration) this._discovering = false;
         this._renderSoon();
@@ -300,14 +325,16 @@
         .filter(entry => !entry.device_id || !disabledDeviceIds.has(entry.device_id));
     }
     _visibleEntities() {
-      const query = this._query.trim().toLocaleLowerCase(this._hass?.locale?.language || this._hass?.language);
+      const language = languageFor(this._hass);
+      const query = this._query.trim().toLocaleLowerCase(language);
+      const hiddenEntities = this._hiddenEntities();
       return this._hubEntries()
         .map(entry => ({entry, state:this._displayState(entry.entity_id)}))
         .filter(item => item.state)
-        .filter(({entry}) => !this._hiddenEntities().has(entry.entity_id))
+        .filter(({entry}) => !hiddenEntities.has(entry.entity_id))
         .filter(({entry, state}) => {
           const searchable = `${entityName(state, entry, this._hass)} ${entry.entity_id} ${state.state}`;
-          return !query || searchable.toLocaleLowerCase().includes(query);
+          return !query || searchable.toLocaleLowerCase(language).includes(query);
         });
     }
     _displayState(entityId) {
@@ -331,10 +358,9 @@
       } catch (_error) {
         saved = null;
       }
-      const validGroups = new Set(GROUPS.map(([key]) => key));
       const state = {
         closedGroups:new Set(Array.isArray(saved?.closed_groups)
-          ? saved.closed_groups.filter(key => validGroups.has(key))
+          ? saved.closed_groups.filter(key => GROUP_KEY_SET.has(key))
           : []),
         chartsOpen:saved?.charts_open !== false,
       };
@@ -346,7 +372,7 @@
       if (!hub || !state) return;
       try {
         window.localStorage?.setItem(this._sectionStateKey(hub), JSON.stringify({
-          closed_groups:GROUPS.map(([key]) => key).filter(key => state.closedGroups.has(key)),
+          closed_groups:GROUP_KEYS.filter(key => state.closedGroups.has(key)),
           charts_open:state.chartsOpen,
         }));
       } catch (_error) {
@@ -358,13 +384,19 @@
       const renderedHub = content?.dataset?.hub;
       if (!content || !renderedHub || hub && renderedHub !== hub) return;
       const state = this._sectionState(renderedHub);
+      let changed = false;
       for (const group of content.querySelectorAll?.("details.entity-group") || []) {
+        const wasClosed = state.closedGroups.has(group.dataset.group);
         if (group.open) state.closedGroups.delete(group.dataset.group);
         else state.closedGroups.add(group.dataset.group);
+        if (wasClosed === group.open) changed = true;
       }
       const charts = content.querySelector?.("details.charts-section");
-      if (charts) state.chartsOpen = charts.open;
-      this._persistSectionState(renderedHub);
+      if (charts && state.chartsOpen !== charts.open) {
+        state.chartsOpen = charts.open;
+        changed = true;
+      }
+      if (changed) this._persistSectionState(renderedHub);
     }
     _sectionToggled(event) {
       const details = event.target;
@@ -444,18 +476,20 @@
       const hubId = this._hubId(hub);
       return this._devices.filter(device => !hubId || device.config_entries?.includes(hubId));
     }
-    _hubDevice(hub = this._hub) {
-      const devices = this._integrationDevices(hub);
+    _hubDevice(hub = this._hub, devices = this._integrationDevices(hub)) {
       return devices.find(device => (
         !device.via_device_id
         && /wiser|drayton|schneider/i.test(`${device.manufacturer || ""} ${device.model || ""}`)
       ))
         || devices.find(device => !device.via_device_id);
     }
-    _hubDevices() { return this._hubDevice() ? [this._hubDevice()] : []; }
-    _roomDevices() {
-      const prefix = `${this._hub} room `;
-      return this._integrationDevices().filter(device => device.identifiers?.some(identifier => {
+    _hubDevices() {
+      const hub = this._hubDevice();
+      return hub ? [hub] : [];
+    }
+    _roomDevices(hub = this._hub, devices = this._integrationDevices(hub)) {
+      const prefix = `${hub} room `;
+      return devices.filter(device => device.identifiers?.some(identifier => {
         if (!Array.isArray(identifier) || identifier[0] !== "wiser") return false;
         const value = identifier[1];
         return typeof value === "string"
@@ -522,9 +556,11 @@
       } catch (_error) {
         // Fall back to locale-aware numeric formatting below.
       }
-      const number = new Intl.NumberFormat(languageFor(this._hass), {
-        maximumFractionDigits:2,
-      }).format(value);
+      const language = languageFor(this._hass);
+      if (!numberFormatters.has(language)) {
+        numberFormatters.set(language, new Intl.NumberFormat(language, {maximumFractionDigits:2}));
+      }
+      const number = numberFormatters.get(language).format(value);
       return `${number}${state.attributes.unit_of_measurement || ""}`;
     }
 
@@ -539,10 +575,17 @@
     _summary() {
       const devices = this._integrationDevices();
       const disabledDevices = devices.filter(device => device.disabled_by);
-      const rooms = this._roomDevices();
-      const enabled = this._hubEntries();
-      const disabled = this._hubEntries(true).filter(entry => entry.disabled_by);
-      const entities = this._attentionEntries()
+      const rooms = this._roomDevices(this._hub, devices);
+      const hubDeviceId = this._hubDevice(this._hub, devices)?.id;
+      const allEntries = this._integrationEntries(true);
+      const enabledEntries = allEntries.filter(entry => !entry.disabled_by);
+      const enabled = enabledEntries.filter(entry => hubDeviceId && entry.device_id === hubDeviceId);
+      const disabled = allEntries.filter(entry => (
+        entry.disabled_by && hubDeviceId && entry.device_id === hubDeviceId
+      ));
+      const disabledDeviceIds = new Set(disabledDevices.map(device => device.id));
+      const entities = enabledEntries
+        .filter(entry => !entry.device_id || !disabledDeviceIds.has(entry.device_id))
         .map(entry => ({entry, state:this._hass?.states?.[entry.entity_id]}))
         .filter(({state}) => state);
       const offline = entities.filter(({state}) => unavailable(state));
@@ -607,6 +650,7 @@
           ...this._config,
           card_configs:{...this._config.card_configs, ...configs},
         };
+        this._configFingerprint = JSON.stringify(this._config);
         this._closeEditor();
         this._loadHistory();
       } catch (error) {
@@ -623,8 +667,12 @@
       const hiddenSections = new Set(draft.hidden_sections);
       const hiddenEntities = new Set(draft.hidden_entities);
       const configurableEntities = this._configurableEntities(hub);
+      const groupedEntities = new Map(GROUPS.map(([key]) => [key, []]));
+      for (const item of configurableEntities) {
+        groupedEntities.get(groupFor(item.entry, item.state)).push(item);
+      }
       const entitySections = GROUPS.map(([key, titleKey, icon]) => {
-        const items = configurableEntities.filter(({entry, state}) => groupFor(entry, state) === key);
+        const items = groupedEntities.get(key);
         if (!items.length) return "";
         const rows = items.map(({entry, state}) => `<ha-checkbox
             class="visibility-row entity-visibility-row"
@@ -852,6 +900,7 @@
               data-action="number"
               data-domain="${domain}"
               data-entity="${id}"
+              aria-label="${esc(entityName(state, entry, this._hass))}"
               min="${min}"
               max="${max}"
               step="${step}"
@@ -1513,7 +1562,7 @@
         min-width: 0;
         font-size: 13px;
       }
-      .chart-title>span ha-icon {
+      .chart-title>span ha-state-icon {
         color: currentColor;
       }
       .chart-title strong {

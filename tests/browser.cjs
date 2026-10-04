@@ -226,6 +226,10 @@ function fixtureData() {
     );
     assert.equal(await page.getByRole("img", {name:/24-hour history for Hub temperature/}).count(), 1);
     await page.setViewportSize({width:375, height:700});
+    await page.waitForFunction(() => Math.round(document
+      .querySelector("wiser-hub-panel")
+      ?.shadowRoot.querySelector('[data-action="diagnostics"]')
+      ?.getBoundingClientRect().width || 0) === 44);
     const diagnostics = page.getByRole("button", {name:"Download diagnostics"});
     const diagnosticsLayout = await diagnostics.evaluate(element => ({
       width:element.getBoundingClientRect().width,

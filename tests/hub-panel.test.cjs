@@ -202,6 +202,31 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
   assert.equal(summary.offline[0].entry.entity_id, "sensor.room_offline");
 });
 
+test("discovers when panel configuration arrives before Home Assistant", async () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  const requests = [];
+  panel._loadHistory = () => {};
+  panel.panel = {config:{hubs:["Home"], hub_ids:{Home:"hub-a"}}};
+  assert.equal(requests.length, 0);
+
+  panel.hass = {
+    states:{},
+    callWS:async message => {
+      requests.push(message.type);
+      return [];
+    },
+  };
+  while (panel._discovering) await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(requests.sort(), [
+    "config/device_registry/list",
+    "config/entity_registry/list",
+  ]);
+  panel.panel = {config:{hubs:["Home"], hub_ids:{Home:"hub-a"}}};
+  assert.equal(requests.length, 2);
+});
+
 test("ignores Home Assistant updates unrelated to the selected hub", () => {
   const {Panel} = setup();
   const panel = new Panel();
@@ -545,6 +570,26 @@ test("adds accessible labels to search and history charts", () => {
     panel.shadowRoot.innerHTML,
     /id="search"[\s\S]*aria-label="Find a hub control or sensor…"/,
   );
+  assert.match(
+    panel._control(
+      {entity_id:"number.target_temperature"},
+      state("number.target_temperature", 20, {friendly_name:"Target temperature", min:5, max:30}),
+    ),
+    /aria-label="Target temperature"/,
+  );
+});
+
+test("allows rendering to resume after the panel reconnects", () => {
+  const {Panel, context} = setup();
+  const panel = new Panel();
+  let cancelled;
+  context.cancelAnimationFrame = frame => { cancelled = frame; };
+  panel._renderFrame = 42;
+
+  panel.disconnectedCallback();
+
+  assert.equal(cancelled, 42);
+  assert.equal(panel._renderFrame, 0);
 });
 
 test("restores scroll only after collapsed sections regain their state", () => {
@@ -614,4 +659,30 @@ test("persists collapsed sections per panel and hub", () => {
   assert.equal(restoredHome.chartsOpen, false);
   assert.deepEqual(Array.from(restoredWorkshop.closedGroups), []);
   assert.equal(restoredWorkshop.chartsOpen, true);
+});
+
+test("does not rewrite unchanged collapsed state during normal renders", () => {
+  const {Panel, context} = setup();
+  const panel = new Panel();
+  let writes = 0;
+  context.window.localStorage = {
+    getItem:() => null,
+    setItem:() => { writes += 1; },
+  };
+  panel._config = {panel_id:"panel-a", hubs:["Home"]};
+  panel._hub = "Home";
+  const group = {dataset:{group:"controls"}, open:true};
+  const charts = {open:true};
+  const content = {
+    dataset:{hub:"Home"},
+    querySelectorAll:() => [group],
+    querySelector:selector => selector === "details.charts-section" ? charts : null,
+  };
+  panel.shadowRoot.querySelector = selector => selector === "#hub-panel-content" ? content : null;
+
+  panel._captureSectionState();
+  assert.equal(writes, 0);
+  group.open = false;
+  panel._captureSectionState();
+  assert.equal(writes, 1);
 });
