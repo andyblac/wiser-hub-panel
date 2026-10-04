@@ -157,6 +157,7 @@
       this._editorHub = null;
       this._editorError = "";
       this._savingSettings = false;
+      this._sectionStates = new Map();
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
@@ -172,6 +173,7 @@
       const configDialog = this.shadowRoot.querySelector?.("#config-dialog");
       configDialog?.addEventListener("closed", () => this._closeEditor());
       configDialog?.addEventListener("close-dialog", () => this._closeEditor());
+      this.shadowRoot.addEventListener("toggle", event => this._sectionToggled(event), true);
     }
 
     set panel(value) {
@@ -201,7 +203,10 @@
     }
 
     connectedCallback() { this._renderSoon(); }
-    disconnectedCallback() { if (this._renderFrame) cancelAnimationFrame(this._renderFrame); }
+    disconnectedCallback() {
+      if (this._renderFrame) cancelAnimationFrame(this._renderFrame);
+      this._captureSectionState();
+    }
 
     _renderSoon() {
       if (this._renderFrame) return;
@@ -314,6 +319,64 @@
       this._optimistic.set(entityId, {state:String(value), at:Date.now()});
       this._renderSoon();
     }
+    _sectionStateKey(hub) {
+      const panel = this._config?.panel_id || "default";
+      return `wiser-hub-panel:${encodeURIComponent(panel)}:${encodeURIComponent(hub)}:sections:v1`;
+    }
+    _sectionState(hub = this._hub) {
+      if (this._sectionStates.has(hub)) return this._sectionStates.get(hub);
+      let saved;
+      try {
+        saved = JSON.parse(window.localStorage?.getItem(this._sectionStateKey(hub)) || "null");
+      } catch (_error) {
+        saved = null;
+      }
+      const validGroups = new Set(GROUPS.map(([key]) => key));
+      const state = {
+        closedGroups:new Set(Array.isArray(saved?.closed_groups)
+          ? saved.closed_groups.filter(key => validGroups.has(key))
+          : []),
+        chartsOpen:saved?.charts_open !== false,
+      };
+      this._sectionStates.set(hub, state);
+      return state;
+    }
+    _persistSectionState(hub = this._hub) {
+      const state = this._sectionStates.get(hub);
+      if (!hub || !state) return;
+      try {
+        window.localStorage?.setItem(this._sectionStateKey(hub), JSON.stringify({
+          closed_groups:GROUPS.map(([key]) => key).filter(key => state.closedGroups.has(key)),
+          charts_open:state.chartsOpen,
+        }));
+      } catch (_error) {
+        // Storage can be disabled; the in-memory state still supports hub switching.
+      }
+    }
+    _captureSectionState(hub) {
+      const content = this.shadowRoot.querySelector?.("#hub-panel-content");
+      const renderedHub = content?.dataset?.hub;
+      if (!content || !renderedHub || hub && renderedHub !== hub) return;
+      const state = this._sectionState(renderedHub);
+      for (const group of content.querySelectorAll?.("details.entity-group") || []) {
+        if (group.open) state.closedGroups.delete(group.dataset.group);
+        else state.closedGroups.add(group.dataset.group);
+      }
+      const charts = content.querySelector?.("details.charts-section");
+      if (charts) state.chartsOpen = charts.open;
+      this._persistSectionState(renderedHub);
+    }
+    _sectionToggled(event) {
+      const details = event.target;
+      if (!details?.matches?.("details.entity-group, details.charts-section")) return;
+      const hub = details.closest?.("#hub-panel-content")?.dataset?.hub;
+      if (!hub) return;
+      const state = this._sectionState(hub);
+      if (details.classList.contains("charts-section")) state.chartsOpen = details.open;
+      else if (details.open) state.closedGroups.delete(details.dataset.group);
+      else state.closedGroups.add(details.dataset.group);
+      this._persistSectionState(hub);
+    }
     _selectHub(hub, focus = false) {
       if (!this._config?.hubs?.includes(hub)) return;
       if (focus) this._pendingHubFocus = hub;
@@ -321,6 +384,7 @@
         if (focus) this._renderSoon();
         return;
       }
+      this._captureSectionState(this._hub);
       this._hub = hub;
       this._query = "";
       this._closeEditor();
@@ -1762,14 +1826,7 @@
       const activeElement = this.shadowRoot.activeElement;
       const focusedHub = this._pendingHubFocus
         || (activeElement?.dataset?.action === "hub" ? activeElement.dataset.hub : undefined);
-      const closedGroupElements = this.shadowRoot.querySelectorAll?.(
-        "details.entity-group:not([open])",
-      ) || [];
-      const closedGroups = new Set(
-        Array.from(closedGroupElements, item => item.dataset.group),
-      );
-      const charts = this.shadowRoot.querySelector?.("details.charts-section");
-      const chartsOpen = charts ? charts.open : true;
+      this._captureSectionState();
       if (!this._hass || !this._config) {
         const panelContent = this.shadowRoot.querySelector?.("#panel-content") || this.shadowRoot;
         panelContent.innerHTML = `${this._style()}<p class="message">
@@ -1778,6 +1835,7 @@
         return;
       }
       const entities = this._visibleEntities();
+      const sectionState = this._sectionState();
       const summary = this._summary();
       const hub = this._hubDevice();
       const hubs = this._config.hubs || [];
@@ -1969,7 +2027,7 @@
       const panelContent = this.shadowRoot.querySelector?.("#panel-content") || this.shadowRoot;
       panelContent.innerHTML = `${this._style()}<div class="page">
         ${hubTabs}
-        <div id="hub-panel-content"${hubPanelAttributes}>
+        <div id="hub-panel-content" data-hub="${esc(this._hub)}"${hubPanelAttributes}>
         <section class="hero">
           <div class="hero-top">
             <div>
@@ -2018,9 +2076,9 @@
       </div>`;
       this._hydrateNativeEntityElements();
       for (const group of this.shadowRoot.querySelectorAll?.("details.entity-group") || []) {
-        if (closedGroups.has(group.dataset.group)) group.open = false;
+        if (sectionState.closedGroups.has(group.dataset.group)) group.open = false;
       }
-      if (!chartsOpen) {
+      if (!sectionState.chartsOpen) {
         const nextCharts = this.shadowRoot.querySelector?.("details.charts-section");
         if (nextCharts) nextCharts.open = false;
       }

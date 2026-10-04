@@ -211,6 +211,11 @@ function fixtureData() {
     const after = await panel.evaluate(element => element.scrollTop);
     assert.ok(Math.abs(after - before) <= 1, `scroll changed from ${before} to ${after}`);
     assert.equal(await firstGroup.evaluate(element => element.open), false);
+    await tabs.nth(1).click();
+    await tabs.nth(0).click();
+    await page.locator("wiser-hub-panel details.entity-group").first().waitFor();
+    assert.equal(await page.locator("wiser-hub-panel details.entity-group").first()
+      .evaluate(element => element.open), false);
 
     const search = page.getByRole("searchbox", {name:"Find a hub control or sensor…"});
     await search.fill("reading 2");

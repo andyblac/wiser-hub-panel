@@ -1,6 +1,6 @@
 {
   "name": "wiser-hub-panel",
-  "version": "0.1.4-beta.1-dev.21",
+  "version": "0.1.4-beta.1-dev.22",
   "private": true,
   "description": "Dynamic Wiser hub overview panel for Home Assistant",
   "license": "MIT",

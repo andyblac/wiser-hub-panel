@@ -553,7 +553,6 @@ test("restores scroll only after collapsed sections regain their state", () => {
   const operations = [];
   let rendered = false;
   let scrollTop = 640;
-  const previousGroup = {dataset:{group:"diagnostics"}};
   const nextGroup = {
     dataset:{group:"diagnostics"},
     _open:true,
@@ -572,12 +571,13 @@ test("restores scroll only after collapsed sections regain their state", () => {
   panel.shadowRoot.activeElement = null;
   panel.shadowRoot.querySelector = () => null;
   panel.shadowRoot.querySelectorAll = selector => {
-    if (selector === "details.entity-group:not([open])") return rendered ? [] : [previousGroup];
     if (selector === "details.entity-group") return rendered ? [nextGroup] : [];
     return [];
   };
   panel._hass = {states:{}};
-  panel._config = {hubs:[]};
+  panel._config = {hubs:["Home"]};
+  panel._hub = "Home";
+  panel._sectionStates.set("Home", {closedGroups:new Set(["diagnostics"]), chartsOpen:true});
   panel._visibleEntities = () => [];
   panel._summary = () => ({devices:[], disabledDevices:[], rooms:[], enabled:[], disabled:[], offline:[], batteries:[]});
   panel._hubDevice = () => null;
@@ -588,4 +588,30 @@ test("restores scroll only after collapsed sections regain their state", () => {
   panel._render();
 
   assert.deepEqual(operations, ["group:false", "scroll:640"]);
+});
+
+test("persists collapsed sections per panel and hub", () => {
+  const {Panel, context} = setup();
+  const values = new Map();
+  context.window.localStorage = {
+    getItem:key => values.get(key) ?? null,
+    setItem:(key, value) => values.set(key, value),
+  };
+  const first = new Panel();
+  first._config = {panel_id:"panel-a", hubs:["Home", "Workshop"]};
+  first._hub = "Home";
+  const home = first._sectionState("Home");
+  home.closedGroups.add("diagnostics");
+  home.chartsOpen = false;
+  first._persistSectionState("Home");
+
+  const restored = new Panel();
+  restored._config = {panel_id:"panel-a", hubs:["Home", "Workshop"]};
+  const restoredHome = restored._sectionState("Home");
+  const restoredWorkshop = restored._sectionState("Workshop");
+
+  assert.deepEqual(Array.from(restoredHome.closedGroups), ["diagnostics"]);
+  assert.equal(restoredHome.chartsOpen, false);
+  assert.deepEqual(Array.from(restoredWorkshop.closedGroups), []);
+  assert.equal(restoredWorkshop.chartsOpen, true);
 });
