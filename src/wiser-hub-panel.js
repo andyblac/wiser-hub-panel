@@ -1511,6 +1511,15 @@
       .charts-section {
         position: relative;
       }
+      .charts-section[open] > .section-heading .chevron {
+        position: absolute;
+        top: 12px;
+        right: 0;
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+      }
       .charts-section:not([open]) .section-heading {
         margin-bottom: 0;
         padding-right: 0;
@@ -1520,8 +1529,8 @@
       }
       .refresh {
         position: absolute;
-        top: 30px;
-        right: 0;
+        top: 12px;
+        right: 52px;
         display: grid;
         place-items: center;
         width: 40px;
@@ -1531,6 +1540,9 @@
         color: var(--secondary-text-color);
         background: var(--card-background-color);
         cursor: pointer;
+      }
+      .refresh ha-icon {
+        --mdc-icon-size: 22px;
       }
       .charts-section:not([open]) .refresh {
         display: none;
