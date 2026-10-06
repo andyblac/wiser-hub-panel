@@ -98,13 +98,22 @@ test("localizes panel labels from Home Assistant's language", () => {
 test("uses Home Assistant's native entity name and state formatters", () => {
   const {Panel, helpers} = setup();
   const entity = state("sensor.boiler", 12.5, {friendly_name:"Fallback boiler"});
+  let nameType;
   const hass = {
-    formatEntityName:() => "Native boiler name",
+    formatEntityName:(_state, type) => {
+      nameType = type;
+      return "Native boiler name";
+    },
     formatEntityState:stateObject => `Native ${stateObject.state}`,
   };
   assert.equal(
     helpers.entityName(entity, {entity_id:entity.entity_id}, hass),
     "Native boiler name",
+  );
+  assert.equal(nameType.type, "entity");
+  assert.equal(
+    helpers.entityName(entity, {entity_id:entity.entity_id, original_name:"Boiler output"}),
+    "Boiler output",
   );
   const panel = new Panel();
   panel._hass = {...hass, states:{[entity.entity_id]:entity}};
@@ -524,6 +533,15 @@ test("applies per-hub section and entity visibility settings", () => {
   assert.deepEqual(Array.from(panel._visibleEntities(), item => item.entry.entity_id), [temperature.entity_id]);
   assert.equal(panel._charts(), "");
   assert.equal(panel._groups([{entry:panel._entries[1], state:output}]), "");
+  assert.doesNotMatch(
+    panel._entityRow({entry:panel._entries[0], state:temperature}),
+    /<small>sensor\.temperature<\/small>/,
+  );
+  panel._config.card_configs.Home.show_entity_ids = true;
+  assert.match(
+    panel._entityRow({entry:panel._entries[0], state:temperature}),
+    /<small>sensor\.temperature<\/small>/,
+  );
 });
 
 test("saves visual visibility settings through the shared panel API", async () => {
@@ -539,8 +557,8 @@ test("saves visual visibility settings through the shared panel API", async () =
   panel._hub = "Home";
   panel._editorOpen = true;
   panel._editorDrafts = {
-    Home:{hidden_sections:["controls"], hidden_entities:["sensor.hidden"]},
-    Workshop:{hidden_sections:["history"], hidden_entities:[]},
+    Home:{hidden_sections:["controls"], hidden_entities:["sensor.hidden"], show_entity_ids:true},
+    Workshop:{hidden_sections:["history"], hidden_entities:[], show_entity_ids:false},
   };
   panel._loadHistory = () => {};
   panel._renderSoon = () => {};
@@ -551,7 +569,7 @@ test("saves visual visibility settings through the shared panel API", async () =
     type:"wiser/panel/configure",
     panel_id:"registry-panel",
     configs:{
-      Home:{existing:true, hidden_sections:["controls"], hidden_entities:["sensor.hidden"]},
+      Home:{existing:true, hidden_sections:["controls"], hidden_entities:["sensor.hidden"], show_entity_ids:true},
       Workshop:{layout:"compact", hidden_sections:["history"]},
     },
   });

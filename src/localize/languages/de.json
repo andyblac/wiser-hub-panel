@@ -72,6 +72,7 @@
   "panel.show_attention": "Elemente anzeigen, die Aufmerksamkeit benötigen",
   "panel.show_disabled_devices": "Deaktivierte Geräte anzeigen",
   "panel.show_disabled_entities": "Deaktivierte Entitäten anzeigen",
+  "panel.show_entity_ids": "Entitäts-IDs anzeigen",
   "panel.unavailable": "nicht verfügbar",
   "panel.unavailable_count": "{count} nicht verfügbar",
   "panel.update_error": "Steuerung konnte nicht aktualisiert werden: {error}",

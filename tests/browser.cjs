@@ -38,6 +38,11 @@ function fixtureData() {
     device_class:"temperature",
     friendly_name:"Hub temperature",
   });
+  add("sensor.power", 2.5, {device_class:"power", friendly_name:"Hub power"});
+  add("sensor.humidity", 45, {device_class:"humidity", friendly_name:"Hub humidity"});
+  add("binary_sensor.heating", "off", {friendly_name:"Heating active"});
+  add("button.boost", "unknown", {friendly_name:"Boost heating"});
+  add("update.hub", "off", {friendly_name:"Hub firmware"});
   entries.push({
     entity_id:"sensor.disabled_control",
     platform:"wiser",
@@ -127,6 +132,16 @@ function fixtureData() {
 
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     const panel = page.locator("wiser-hub-panel");
+    assert.equal(await page.locator("wiser-hub-panel .entity-copy small").count(), 0);
+    const groupColumnCount = () => panel.evaluate(element => new Set(
+      [...element.shadowRoot.querySelectorAll("details.entity-group")]
+        .map(group => Math.round(group.getBoundingClientRect().left)),
+    ).size);
+    const compactColumns = await groupColumnCount();
+    await page.setViewportSize({width:1400, height:600});
+    const wideColumns = await groupColumnCount();
+    assert.ok(wideColumns > compactColumns, `${compactColumns} columns did not expand at wider viewport`);
+    await page.setViewportSize({width:900, height:600});
     const tabs = page.getByRole("tab");
     assert.equal(await tabs.count(), 2);
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
@@ -230,7 +245,8 @@ function fixtureData() {
       .querySelector("wiser-hub-panel")
       ?.shadowRoot.querySelector('[data-action="diagnostics"]')
       ?.getBoundingClientRect().width || 0) === 44);
-    const diagnostics = page.getByRole("button", {name:"Download diagnostics"});
+    const diagnostics = page.locator('wiser-hub-panel [data-action="diagnostics"]');
+    assert.equal(await diagnostics.locator(".diagnostics-label").textContent(), "Download diagnostics");
     const diagnosticsLayout = await diagnostics.evaluate(element => ({
       width:element.getBoundingClientRect().width,
       labelDisplay:getComputedStyle(element.querySelector(".diagnostics-label")).display,
@@ -269,6 +285,12 @@ function fixtureData() {
       await editor.locator('[data-action="visibility-section"]').first().evaluate(element => element.tagName),
       "HA-SWITCH",
     );
+    const entityIdsSwitch = editor.locator('[data-action="show-entity-ids"][data-hub="Home"]');
+    assert.equal(await entityIdsSwitch.evaluate(element => element.tagName), "HA-SWITCH");
+    assert.equal(await entityIdsSwitch.evaluate(element => element.checked), false);
+    assert.equal(await entityIdsSwitch.evaluate(element => (
+      element.closest(".entity-id-toggle")?.nextElementSibling?.tagName
+    )), "SECTION");
     assert.equal(await editor.locator('ha-checkbox[data-action="visibility-section"]').count(), 0);
     const editorOverflow = await editor.locator(".config-editor").evaluate(element => ({
       clientWidth:element.clientWidth,
@@ -295,6 +317,10 @@ function fixtureData() {
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await editor.evaluate(element => element === window.fixtureEditor), true);
     assert.equal(await editor.evaluate(element => element.open), true);
+    await entityIdsSwitch.evaluate(element => {
+      element.checked = true;
+      element.dispatchEvent(new Event("change", {bubbles:true}));
+    });
     for (const selector of [
       '[data-action="visibility-section"][data-hub="Home"][data-value="controls"]',
       '[data-action="visibility-entity"][data-hub="Home"][data-value="sensor.reading_0"]',
@@ -310,7 +336,12 @@ function fixtureData() {
     assert.equal(saved.panel_id, "registry-panel");
     assert.deepEqual(saved.configs.Home.hidden_sections, ["controls"]);
     assert.deepEqual(saved.configs.Home.hidden_entities, ["sensor.reading_0"]);
+    assert.equal(saved.configs.Home.show_entity_ids, true);
     assert.deepEqual(saved.configs.Workshop, {});
+    await page.waitForFunction(() => document
+      .querySelector("wiser-hub-panel")
+      ?.shadowRoot.querySelector(".entity-copy small"));
+    assert.ok(await page.locator("wiser-hub-panel .entity-copy small").count() > 0);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

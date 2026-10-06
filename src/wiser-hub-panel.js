@@ -67,15 +67,15 @@
   function entityName(state, entry, hass) {
     if (state && typeof hass?.formatEntityName === "function") {
       try {
-        const formatted = hass.formatEntityName(state, undefined);
+        const formatted = hass.formatEntityName(state, {type:"entity"});
         if (typeof formatted === "string" && formatted.trim()) return formatted;
       } catch (_error) {
         // Fall back to the registry and state values below.
       }
     }
-    return state?.attributes?.friendly_name
-      || entry?.name
+    return entry?.name
       || entry?.original_name
+      || state?.attributes?.friendly_name
       || entry?.entity_id
       || "";
   }
@@ -615,6 +615,7 @@
         return [hub, {
           hidden_sections:[...(Array.isArray(settings.hidden_sections) ? settings.hidden_sections : [])],
           hidden_entities:[...(Array.isArray(settings.hidden_entities) ? settings.hidden_entities : [])],
+          show_entity_ids:Boolean(settings.show_entity_ids),
         }];
       }));
       this._editorHub = this._config.hubs?.includes(this._hub) ? this._hub : this._config.hubs?.[0];
@@ -648,6 +649,8 @@
           else delete settings.hidden_sections;
           if (hiddenEntities.length) settings.hidden_entities = hiddenEntities;
           else delete settings.hidden_entities;
+          if (draft.show_entity_ids) settings.show_entity_ids = true;
+          else delete settings.show_entity_ids;
           return [hub, settings];
         }));
         await this._hass.callWS({
@@ -725,6 +728,16 @@
         >
           <h2>${esc(hub)}</h2>
           <p>${this._t("panel.settings_description", {hub})}</p>
+          <div class="standalone-section-toggle entity-id-toggle">
+            <ha-icon icon="mdi:identifier"></ha-icon>
+            <span>${this._t("panel.show_entity_ids")}</span>
+            <ha-switch
+              data-action="show-entity-ids"
+              data-hub="${esc(hub)}"
+              aria-label="${esc(this._t("panel.show_entity_ids"))}"
+              ${draft.show_entity_ids ? "checked" : ""}
+            ></ha-switch>
+          </div>
           <section>
             <h3>${this._t("panel.section_visibility")}</h3>
             <div class="standalone-section-toggle">
@@ -935,7 +948,7 @@
           </span>
           <span class="entity-copy">
             <strong>${esc(entityName(state, entry, this._hass))}</strong>
-            <small>${entityId}</small>
+            ${this._hubSettings().show_entity_ids ? `<small>${entityId}</small>` : ""}
           </span>
           <span class="entity-state">
             <state-display data-state-display="${entityId}"></state-display>
@@ -1024,8 +1037,7 @@
       const hiddenSections = this._hiddenSections();
       const grouped = new Map(GROUPS.map(([key]) => [key, []]));
       for (const item of entities) grouped.get(groupFor(item.entry, item.state)).push(item);
-      const columns = [[], []];
-      const columnWeights = [0, 0];
+      const groups = [];
       GROUPS.forEach(([key], order) => {
         if (hiddenSections.has(key)) return;
         const items = grouped.get(key);
@@ -1058,12 +1070,9 @@
           </summary>
           <div class="entity-list">${itemMarkup}</div>
         </details>`;
-        const column = columnWeights[0] <= columnWeights[1] ? 0 : 1;
-        columns[column].push(markup);
-        columnWeights[column] += items.length + 1;
+        groups.push(markup);
       });
-      if (!columns[0].length && !columns[1].length) return "";
-      return columns.map(items => `<div class="group-column">${items.join("")}</div>`).join("");
+      return groups.join("");
     }
 
     _hydrateNativeEntityElements() {
@@ -1103,7 +1112,7 @@
         opacity: .65;
       }
       .page {
-        max-width: 1500px;
+        max-width: 2400px;
         margin: 0 auto;
         padding: 24px clamp(14px,3vw,40px) 56px;
       }
@@ -1394,6 +1403,9 @@
       .standalone-section-toggle ha-icon {
         color: var(--primary-color);
       }
+      .entity-id-toggle {
+        margin-bottom: 24px;
+      }
       .entity-visibility-section {
         display: block;
         min-width: 0;
@@ -1615,20 +1627,17 @@
         font-size: 10px;
       }
       .groups {
-        display: grid;
-        grid-template-columns: repeat(2,minmax(0,1fr));
-        gap: 16px;
-        align-items: start;
+        columns: 400px;
+        column-gap: 16px;
         margin-top: 28px;
       }
-      .group-column {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        min-width: 0;
-      }
       .entity-group {
+        display: inline-block;
+        width: 100%;
+        min-width: 0;
+        margin-bottom: 16px;
         overflow: hidden;
+        break-inside: avoid;
         border: 1px solid var(--divider-color);
         border-radius: 18px;
         background: var(--card-background-color);
@@ -1862,14 +1871,14 @@
         .groups {
           display: flex;
           flex-direction: column;
-        }
-        .group-column {
-          display: contents;
+          gap: 16px;
         }
         .entity-group {
+          display: block;
           order: var(--group-order);
+          margin-bottom: 0;
         }
-        .entity-state small, .entity-copy small {
+        .entity-state small {
           display: none;
         }
         .entity-main {
@@ -2234,6 +2243,11 @@
 
     async _change(event) {
       const target = event.target;
+      if (target.dataset.action === "show-entity-ids") {
+        const draft = this._editorDrafts?.[target.dataset.hub];
+        if (draft) draft.show_entity_ids = Boolean(target.checked);
+        return;
+      }
       if (["visibility-section", "visibility-entity"].includes(target.dataset.action)) {
         const draft = this._editorDrafts?.[target.dataset.hub];
         if (!draft) return;
