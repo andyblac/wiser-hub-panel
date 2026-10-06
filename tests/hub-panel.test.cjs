@@ -58,6 +58,55 @@ test("registers only the Wiser Hub panel custom element", () => {
   assert.equal(Panel.panelApiVersion, 1);
 });
 
+test("matches responsive group columns to the available panel width", () => {
+  const {helpers} = setup();
+  assert.equal(helpers.groupColumnCount(0), 1);
+  assert.equal(helpers.groupColumnCount(895), 1);
+  assert.equal(helpers.groupColumnCount(896), 2);
+  assert.equal(helpers.groupColumnCount(1311), 2);
+  assert.equal(helpers.groupColumnCount(1312), 3);
+  assert.equal(helpers.groupColumnCount(1727), 3);
+  assert.equal(helpers.groupColumnCount(1728), 4);
+  assert.equal(helpers.groupColumnCount(4000), 4);
+});
+
+test("normalizes configured section ordering", () => {
+  const {helpers} = setup();
+  assert.deepEqual(
+    Array.from(helpers.orderedGroupKeys(["sensors", "controls", "sensors", "unknown"])),
+    ["sensors", "controls", "actions", "heating", "environment", "energy", "safety", "diagnostics", "system"],
+  );
+});
+
+test("flows ordered sections horizontally or vertically", () => {
+  const {helpers} = setup();
+  const groups = [
+    ["controls", 9], ["actions", 3], ["environment", 5],
+    ["energy", 4], ["heating", 3], ["safety", 5],
+    ["sensors", 8], ["diagnostics", 3],
+  ].map(([key, weight]) => ({key, weight}));
+  assert.deepEqual(
+    Array.from(helpers.horizontalGroupColumns(groups, 3), column => (
+      Array.from(column, group => group.key)
+    )),
+    [
+      ["controls", "diagnostics"],
+      ["actions", "energy", "safety"],
+      ["environment", "heating", "sensors"],
+    ],
+  );
+  assert.deepEqual(
+    Array.from(helpers.verticalGroupColumns(groups, 3), column => (
+      Array.from(column, group => group.key)
+    )),
+    [
+      ["controls", "actions"],
+      ["environment", "energy", "heating"],
+      ["safety", "sensors", "diagnostics"],
+    ],
+  );
+});
+
 test("localizes panel labels from Home Assistant's language", () => {
   const {helpers} = setup();
   assert.equal(helpers.languageFor({locale:{language:"en-GB"}}), "en-GB");
@@ -557,7 +606,13 @@ test("saves visual visibility settings through the shared panel API", async () =
   panel._hub = "Home";
   panel._editorOpen = true;
   panel._editorDrafts = {
-    Home:{hidden_sections:["controls"], hidden_entities:["sensor.hidden"], show_entity_ids:true},
+    Home:{
+      hidden_sections:["controls"],
+      hidden_entities:["sensor.hidden"],
+      show_entity_ids:true,
+      section_order:["actions", "controls"],
+      section_flow:"vertical",
+    },
     Workshop:{hidden_sections:["history"], hidden_entities:[], show_entity_ids:false},
   };
   panel._loadHistory = () => {};
@@ -569,7 +624,14 @@ test("saves visual visibility settings through the shared panel API", async () =
     type:"wiser/panel/configure",
     panel_id:"registry-panel",
     configs:{
-      Home:{existing:true, hidden_sections:["controls"], hidden_entities:["sensor.hidden"], show_entity_ids:true},
+      Home:{
+        existing:true,
+        hidden_sections:["controls"],
+        hidden_entities:["sensor.hidden"],
+        show_entity_ids:true,
+        section_order:["actions", "controls", "heating", "environment", "energy", "safety", "sensors", "diagnostics", "system"],
+        section_flow:"vertical",
+      },
       Workshop:{layout:"compact", hidden_sections:["history"]},
     },
   });

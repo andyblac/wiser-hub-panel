@@ -72,6 +72,19 @@ function fixtureData() {
       for (const name of ["ha-icon", "ha-state-icon", "state-display"]) {
         if (!customElements.get(name)) customElements.define(name, class extends HTMLElement {});
       }
+      if (!customElements.get("partial-panel-resolver")) {
+        customElements.define("partial-panel-resolver", class extends HTMLElement {
+          getRoutes(panels) {
+            return {routes:Object.fromEntries(panels.map(panel => [panel.url_path, {
+              load:async () => {
+                if (!customElements.get("ha-button-toggle-group")) {
+                  customElements.define("ha-button-toggle-group", class extends HTMLElement {});
+                }
+              },
+            }]))};
+          }
+        });
+      }
       const panel = document.querySelector("wiser-hub-panel");
       const devices = [
         {
@@ -139,8 +152,47 @@ function fixtureData() {
     ).size);
     const compactColumns = await groupColumnCount();
     await page.setViewportSize({width:1400, height:600});
+    await page.waitForFunction(compact => {
+      const panelElement = document.querySelector("wiser-hub-panel");
+      const lefts = new Set([...panelElement.shadowRoot.querySelectorAll("details.entity-group")]
+        .map(group => Math.round(group.getBoundingClientRect().left)));
+      return lefts.size > compact;
+    }, compactColumns);
     const wideColumns = await groupColumnCount();
     assert.ok(wideColumns > compactColumns, `${compactColumns} columns did not expand at wider viewport`);
+    const sectionLayout = await panel.evaluate(element => {
+      const columns = [...element.shadowRoot.querySelectorAll(".groups.flow-horizontal > .group-column")]
+        .map(column => [...column.querySelectorAll("details.entity-group")]);
+      const gaps = [];
+      const visualOrder = columns.flat().map(group => {
+        const rect = group.getBoundingClientRect();
+        return {
+          order:Number(group.style.getPropertyValue("--group-order")),
+          top:Math.round(rect.top),
+          left:Math.round(rect.left),
+        };
+      }).sort((a, b) => a.top - b.top || a.left - b.left).map(group => group.order);
+      for (const column of columns) {
+        for (let index = 1; index < column.length; index += 1) {
+          const previous = column[index - 1].getBoundingClientRect();
+          const current = column[index].getBoundingClientRect();
+          gaps.push(Math.round(current.top - previous.bottom));
+        }
+      }
+      return {visualOrder, gaps};
+    });
+    assert.deepEqual(sectionLayout.visualOrder, [...sectionLayout.visualOrder].sort((a, b) => a - b));
+    assert.ok(sectionLayout.gaps.every(gap => gap === 16), `unexpected column gaps: ${sectionLayout.gaps.join(", ")}`);
+    const columnTops = await panel.evaluate(element => {
+      const tops = new Map();
+      for (const group of element.shadowRoot.querySelectorAll("details.entity-group")) {
+        const rect = group.getBoundingClientRect();
+        const left = Math.round(rect.left);
+        tops.set(left, Math.min(tops.get(left) ?? Infinity, Math.round(rect.top)));
+      }
+      return [...tops.values()];
+    });
+    assert.equal(new Set(columnTops).size, 1, `column tops are misaligned: ${columnTops.join(", ")}`);
     await page.setViewportSize({width:900, height:600});
     const tabs = page.getByRole("tab");
     assert.equal(await tabs.count(), 2);
@@ -258,6 +310,7 @@ function fixtureData() {
 
     assert.equal(await page.locator('wiser-hub-panel [data-action="settings"]').count(), 0);
     await panel.evaluate(element => element._openEditor());
+    await page.waitForFunction(() => customElements.get("ha-button-toggle-group"));
     const editor = page.locator("wiser-hub-panel #config-dialog");
     assert.equal(await editor.evaluate(element => element.open), true);
     assert.ok((await editor.textContent()).includes(`Wiser Hub Panel · ${packageVersion}`));
@@ -289,8 +342,64 @@ function fixtureData() {
     assert.equal(await entityIdsSwitch.evaluate(element => element.tagName), "HA-SWITCH");
     assert.equal(await entityIdsSwitch.evaluate(element => element.checked), false);
     assert.equal(await entityIdsSwitch.evaluate(element => (
-      element.closest(".entity-id-toggle")?.nextElementSibling?.tagName
-    )), "SECTION");
+      element.closest(".entity-id-toggle")?.nextElementSibling?.classList.contains("section-flow-setting")
+    )), true);
+    const flowOptions = editor.locator('.hub-editor[data-hub="Home"] ha-button-toggle-group.section-flow-options');
+    assert.equal(await flowOptions.evaluate(element => element.tagName), "HA-BUTTON-TOGGLE-GROUP");
+    assert.deepEqual(await flowOptions.evaluate(element => ({
+      active:element.active,
+      size:element.getAttribute("size"),
+      nowrap:element.hasAttribute("no-wrap"),
+      buttons:element.buttons.map(button => ({
+        label:button.label,
+        value:button.value,
+        iconParts:(button.iconPath.match(/M/g) || []).length,
+      })),
+    })), {
+      active:"horizontal",
+      size:"s",
+      nowrap:true,
+      buttons:[
+        {label:"Left to right, then top to bottom", value:"horizontal", iconParts:2},
+        {label:"Top to bottom, then left to right", value:"vertical", iconParts:2},
+      ],
+    });
+    await flowOptions.evaluate(element => element.dispatchEvent(new CustomEvent("value-changed", {
+      bubbles:true,
+      composed:true,
+      detail:{value:"vertical"},
+    })));
+    assert.equal(await flowOptions.evaluate(element => element.active), "vertical");
+    const entitySections = editor.locator('.hub-editor[data-hub="Home"] .entity-visibility-section');
+    const sectionDragHandles = editor.locator('.hub-editor[data-hub="Home"] .entity-section-drag-handle');
+    assert.ok(await entitySections.count() >= 3);
+    assert.equal(await entitySections.first().getAttribute("draggable"), null);
+    assert.equal(await sectionDragHandles.first().getAttribute("draggable"), "true");
+    assert.equal(await editor.locator(".section-order-list").count(), 0);
+    await sectionDragHandles.first().evaluate(handle => {
+      const source = handle.closest(".entity-visibility-section");
+      const target = source.nextElementSibling;
+      const following = target.nextElementSibling;
+      const container = source.parentElement;
+      const transfer = new DataTransfer();
+      handle.dispatchEvent(new DragEvent("dragstart", {bubbles:true, composed:true, dataTransfer:transfer}));
+      const clientY = following
+        ? following.getBoundingClientRect().top - 4
+        : target.getBoundingClientRect().bottom + 4;
+      container.dispatchEvent(new DragEvent("dragover", {
+        bubbles:true,
+        composed:true,
+        dataTransfer:transfer,
+        clientY,
+      }));
+      container.dispatchEvent(new DragEvent("drop", {
+        bubbles:true,
+        composed:true,
+        dataTransfer:transfer,
+        clientY,
+      }));
+    });
+    assert.match(await entitySections.first().textContent(), /Actions/);
     assert.equal(await editor.locator('ha-checkbox[data-action="visibility-section"]').count(), 0);
     const editorOverflow = await editor.locator(".config-editor").evaluate(element => ({
       clientWidth:element.clientWidth,
@@ -300,7 +409,6 @@ function fixtureData() {
     assert.equal(editorOverflow.overflowX, "hidden");
     assert.ok(editorOverflow.scrollWidth <= editorOverflow.clientWidth);
     assert.equal(await editor.locator(".dialog-actions .editor-version").count(), 1);
-    const entitySections = editor.locator(".entity-visibility-section");
     assert.ok(await entitySections.count() >= 3);
     assert.equal(await entitySections.first().evaluate(element => element.tagName), "HA-EXPANSION-PANEL");
     assert.equal(await entitySections.evaluateAll(elements => elements.every(element => element.expanded === false)), true);
@@ -337,7 +445,15 @@ function fixtureData() {
     assert.deepEqual(saved.configs.Home.hidden_sections, ["controls"]);
     assert.deepEqual(saved.configs.Home.hidden_entities, ["sensor.reading_0"]);
     assert.equal(saved.configs.Home.show_entity_ids, true);
+    assert.equal(saved.configs.Home.section_flow, "vertical");
+    assert.deepEqual(saved.configs.Home.section_order, [
+      "actions", "controls", "heating", "environment", "energy",
+      "safety", "sensors", "diagnostics", "system",
+    ]);
     assert.deepEqual(saved.configs.Workshop, {});
+    await page.waitForFunction(() => document
+      .querySelector("wiser-hub-panel")
+      ?.shadowRoot.querySelectorAll(".groups.flow-vertical > .group-column").length > 0);
     await page.waitForFunction(() => document
       .querySelector("wiser-hub-panel")
       ?.shadowRoot.querySelector(".entity-copy small"));

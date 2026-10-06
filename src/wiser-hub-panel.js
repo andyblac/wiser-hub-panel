@@ -5,6 +5,13 @@
   const pluralFormatters = new Map();
   const relativeTimeFormatters = new Map();
   const numberFormatters = new Map();
+  const GROUP_MIN_WIDTH = 400;
+  const GROUP_GAP = 16;
+  const GROUP_MAX_COLUMNS = 4;
+  const PAGE_MAX_WIDTH = 2400;
+  const PAGE_MAX_HORIZONTAL_PADDING = 80;
+  const FLOW_HORIZONTAL_ICON_PATH = "M3 7.45V4.15H7.4V1.49L11.71 5.8L7.4 10.11V7.45H3ZM15.75 12.2H19.05V16.6H21.71L17.4 20.91L13.09 16.6H15.75V12.2Z";
+  const FLOW_VERTICAL_ICON_PATH = "M5.45 2.2H8.75V6.6H11.41L7.1 10.91L2.79 6.6H5.45V2.2ZM12.2 18.25V14.95H16.6V12.29L20.91 16.6L16.6 20.91V18.25H12.2Z";
   const NATIVE_KEYS = {
     "common.close":"ui.card.cover.close_cover",
     "common.cancel":"ui.common.cancel",
@@ -64,6 +71,15 @@
   })[character]);
   const unavailable = state => !state || state.state === "unavailable";
   const numeric = state => state && state.state !== "" && Number.isFinite(Number(state.state));
+  function groupColumnCount(width) {
+    const panelWidth = Number.isFinite(Number(width)) ? Number(width) : 0;
+    const availableWidth = Math.max(
+      0,
+      Math.min(panelWidth, PAGE_MAX_WIDTH) - PAGE_MAX_HORIZONTAL_PADDING,
+    );
+    const fittingColumns = Math.floor((availableWidth + GROUP_GAP) / (GROUP_MIN_WIDTH + GROUP_GAP));
+    return Math.max(1, Math.min(GROUP_MAX_COLUMNS, fittingColumns));
+  }
   function entityName(state, entry, hass) {
     if (state && typeof hass?.formatEntityName === "function") {
       try {
@@ -110,6 +126,51 @@
   const GROUP_KEYS = GROUPS.map(([key]) => key);
   const GROUP_KEY_SET = new Set(GROUP_KEYS);
   const GROUP_META = new Map(GROUPS.map(([key, titleKey, icon]) => [key, {titleKey, icon}]));
+  function orderedGroupKeys(order) {
+    const configured = Array.isArray(order)
+      ? order.filter((key, index) => GROUP_KEY_SET.has(key) && order.indexOf(key) === index)
+      : [];
+    return [...configured, ...GROUP_KEYS.filter(key => !configured.includes(key))];
+  }
+  const sectionFlow = value => value === "vertical" ? "vertical" : "horizontal";
+  function verticalGroupColumns(items, requestedColumns) {
+    const columnCount = Math.max(1, Math.min(Number(requestedColumns) || 1, items.length || 1));
+    const columns = Array.from({length:columnCount}, () => []);
+    let offset = 0;
+    let remainingWeight = items.reduce((total, item) => total + item.weight, 0);
+    for (let column = 0; column < columnCount && offset < items.length; column += 1) {
+      const columnsLeft = columnCount - column;
+      const targetWeight = remainingWeight / columnsLeft;
+      let columnWeight = 0;
+      while (offset < items.length - (columnsLeft - 1)) {
+        const next = items[offset];
+        const currentDifference = Math.abs(targetWeight - columnWeight);
+        const nextDifference = Math.abs(targetWeight - (columnWeight + next.weight));
+        if (columns[column].length && currentDifference <= nextDifference) break;
+        columns[column].push(next);
+        columnWeight += next.weight;
+        offset += 1;
+      }
+      if (!columns[column].length) {
+        columns[column].push(items[offset]);
+        columnWeight += items[offset].weight;
+        offset += 1;
+      }
+      remainingWeight -= columnWeight;
+    }
+    return columns;
+  }
+  function horizontalGroupColumns(items, requestedColumns) {
+    const columnCount = Math.max(1, Math.min(Number(requestedColumns) || 1, items.length || 1));
+    const columns = Array.from({length:columnCount}, () => []);
+    const columnWeights = Array(columnCount).fill(0);
+    for (const item of items) {
+      const column = columnWeights.indexOf(Math.min(...columnWeights));
+      columns[column].push(item);
+      columnWeights[column] += item.weight;
+    }
+    return columns;
+  }
   const ENERGY_CLASSES = new Set(["power", "energy", "current", "voltage", "power_factor", "gas", "water"]);
   const ENVIRONMENT_CLASSES = new Set(["temperature", "humidity", "pressure", "illuminance", "moisture", "volatile_organic_compounds"]);
   const DIAGNOSTIC_CLASSES = new Set(["battery", "signal_strength", "connectivity", "timestamp", "duration"]);
@@ -179,15 +240,23 @@
       this._editorHub = null;
       this._editorError = "";
       this._savingSettings = false;
+      this._draggedSection = null;
+      this._sectionFlowControlPromise = null;
       this._sectionStates = new Map();
       this._error = "";
       this._query = "";
       this._renderFrame = 0;
+      this._groupColumnCount = 1;
+      this._resizeObserver = null;
       this._configFingerprint = "";
       this._registryLoaded = false;
       this.shadowRoot.addEventListener("click", event => this._click(event));
       this.shadowRoot.addEventListener("keydown", event => this._keydown(event));
       this.shadowRoot.addEventListener("change", event => this._change(event));
+      this.shadowRoot.addEventListener("dragstart", event => this._sectionDragStart(event));
+      this.shadowRoot.addEventListener("dragover", event => this._sectionDragOver(event));
+      this.shadowRoot.addEventListener("drop", event => this._sectionDrop(event));
+      this.shadowRoot.addEventListener("dragend", () => this._clearSectionDrag());
       this.shadowRoot.addEventListener("input", event => {
         if (event.target?.id === "search") {
           this._query = event.target.value;
@@ -234,10 +303,23 @@
       else if (updateAffectsPanel || optimisticChanged) this._renderSoon();
     }
 
-    connectedCallback() { this._renderSoon(); }
+    connectedCallback() {
+      if (typeof ResizeObserver === "function") {
+        this._resizeObserver ||= new ResizeObserver(entries => {
+          const width = entries[0]?.contentRect?.width || this.clientWidth;
+          const columnCount = groupColumnCount(width);
+          if (columnCount === this._groupColumnCount) return;
+          this._groupColumnCount = columnCount;
+          this._renderSoon();
+        });
+        this._resizeObserver.observe(this);
+      }
+      this._renderSoon();
+    }
     disconnectedCallback() {
       if (this._renderFrame) cancelAnimationFrame(this._renderFrame);
       this._renderFrame = 0;
+      this._resizeObserver?.disconnect();
       this._captureSectionState();
     }
 
@@ -616,12 +698,47 @@
           hidden_sections:[...(Array.isArray(settings.hidden_sections) ? settings.hidden_sections : [])],
           hidden_entities:[...(Array.isArray(settings.hidden_entities) ? settings.hidden_entities : [])],
           show_entity_ids:Boolean(settings.show_entity_ids),
+          section_order:orderedGroupKeys(settings.section_order),
+          section_flow:sectionFlow(settings.section_flow),
         }];
       }));
       this._editorHub = this._config.hubs?.includes(this._hub) ? this._hub : this._config.hubs?.[0];
       this._editorError = "";
       this._editorOpen = true;
       this._renderEditor();
+      if (!customElements.get("ha-button-toggle-group")) {
+        this._ensureSectionFlowControl().then(loaded => {
+          if (loaded && this._editorOpen) this._renderEditor();
+        });
+      }
+    }
+
+    _ensureSectionFlowControl() {
+      if (customElements.get("ha-button-toggle-group")) return Promise.resolve(true);
+      if (this._sectionFlowControlPromise) return this._sectionFlowControlPromise;
+      this._sectionFlowControlPromise = (async () => {
+        await customElements.whenDefined("partial-panel-resolver");
+        const resolver = document.createElement("partial-panel-resolver");
+        const routeKey = "wiser-calendar-loader";
+        const panels = [{url_path:routeKey, component_name:"calendar"}];
+        const routes = resolver.getRoutes?.(panels);
+        let route = routes?.routes?.[routeKey];
+        let loadRoute = typeof route?.load === "function" ? route.load.bind(route) : null;
+        if (typeof loadRoute !== "function") {
+          resolver.hass = {panels};
+          resolver._updateRoutes?.();
+          route = resolver.routerOptions?.routes?.[routeKey];
+          loadRoute = typeof route?.load === "function" ? route.load.bind(route) : null;
+        }
+        if (typeof loadRoute !== "function") throw new Error("Home Assistant calendar route is unavailable");
+        await loadRoute();
+        await customElements.whenDefined("ha-button-toggle-group");
+        return true;
+      })().catch(() => {
+        this._sectionFlowControlPromise = null;
+        return false;
+      });
+      return this._sectionFlowControlPromise;
     }
 
     _closeEditor() {
@@ -651,6 +768,12 @@
           else delete settings.hidden_entities;
           if (draft.show_entity_ids) settings.show_entity_ids = true;
           else delete settings.show_entity_ids;
+          const sectionOrder = orderedGroupKeys(draft.section_order);
+          if (sectionOrder.some((key, index) => key !== GROUP_KEYS[index])) {
+            settings.section_order = sectionOrder;
+          } else delete settings.section_order;
+          if (sectionFlow(draft.section_flow) === "vertical") settings.section_flow = "vertical";
+          else delete settings.section_flow;
           return [hub, settings];
         }));
         await this._hass.callWS({
@@ -683,9 +806,10 @@
       for (const item of configurableEntities) {
         groupedEntities.get(groupFor(item.entry, item.state)).push(item);
       }
-      const entitySections = GROUPS.map(([key, titleKey, icon]) => {
-        const items = groupedEntities.get(key);
-        if (!items.length) return "";
+      const orderedSections = orderedGroupKeys(draft.section_order)
+        .map(key => ({key, ...GROUP_META.get(key), items:groupedEntities.get(key)}))
+        .filter(({items}) => items.length);
+      const entitySections = orderedSections.map(({key, titleKey, icon, items}) => {
         const rows = items.map(({entry, state}) => `<ha-checkbox
             class="visibility-row entity-visibility-row"
             data-action="visibility-entity"
@@ -701,10 +825,17 @@
         return `<ha-expansion-panel
           class="entity-visibility-section"
           data-group="${esc(key)}"
+          data-hub="${esc(hub)}"
           outlined
         >
-          <ha-icon slot="leading-icon" icon="${icon}"></ha-icon>
+          <ha-icon
+            class="entity-section-drag-handle"
+            slot="leading-icon"
+            icon="mdi:drag-vertical"
+            draggable="true"
+          ></ha-icon>
           <div class="entity-section-header" slot="header" role="heading" aria-level="3">
+            <ha-icon class="entity-section-icon" icon="${icon}"></ha-icon>
             <span>${this._t(titleKey)}</span>
             <small>${items.length} ${this._t(pluralKey("panel.entity", items.length, this._hass))}</small>
             <ha-switch
@@ -738,6 +869,17 @@
               ${draft.show_entity_ids ? "checked" : ""}
             ></ha-switch>
           </div>
+          <div class="standalone-section-toggle section-flow-setting">
+            <ha-icon icon="mdi:view-dashboard-outline"></ha-icon>
+            <span>${this._t("panel.section_flow")}</span>
+            <ha-button-toggle-group
+              class="section-flow-options"
+              data-hub="${esc(hub)}"
+              size="s"
+              no-wrap
+              aria-label="${esc(this._t("panel.section_flow"))}"
+            ></ha-button-toggle-group>
+          </div>
           <section>
             <h3>${this._t("panel.section_visibility")}</h3>
             <div class="standalone-section-toggle">
@@ -754,7 +896,7 @@
           </section>
           ${entitySections ? `<section>
             <h3>${this._t("panel.entity_visibility")}</h3>
-            <div class="entity-visibility-sections">${entitySections}</div>
+            <div class="entity-visibility-sections" data-hub="${esc(hub)}">${entitySections}</div>
           </section>` : ""}
         </section>`;
     }
@@ -806,6 +948,28 @@
         toggle.checked = toggle.hasAttribute("checked");
         toggle.addEventListener("click", event => event.stopPropagation());
       }
+      for (const toggle of dialog.querySelectorAll?.("ha-button-toggle-group.section-flow-options") || []) {
+        const draft = this._editorDrafts?.[toggle.dataset.hub];
+        toggle.buttons = [
+          {
+            label:this._t("panel.flow_horizontal"),
+            value:"horizontal",
+            iconPath:FLOW_HORIZONTAL_ICON_PATH,
+          },
+          {
+            label:this._t("panel.flow_vertical"),
+            value:"vertical",
+            iconPath:FLOW_VERTICAL_ICON_PATH,
+          },
+        ];
+        toggle.active = draft?.section_flow || "horizontal";
+        toggle.addEventListener("value-changed", event => {
+          const value = event.detail?.value;
+          if (!draft || !["horizontal", "vertical"].includes(value)) return;
+          draft.section_flow = value;
+          toggle.active = value;
+        });
+      }
       for (const panel of dialog.querySelectorAll?.("ha-expansion-panel.entity-visibility-section") || []) {
         panel.expanded = false;
       }
@@ -829,6 +993,101 @@
       }
       const container = this.shadowRoot.querySelector?.(".config-editor");
       if (container) container.scrollTop = 0;
+    }
+
+    _applyEditorSectionOrder(hub, visibleOrder) {
+      const draft = this._editorDrafts?.[hub];
+      const dialog = this.shadowRoot.querySelector?.("#config-dialog");
+      const editor = Array.from(dialog?.querySelectorAll?.(".hub-editor") || [])
+        .find(candidate => candidate.dataset.hub === hub);
+      const entitySections = editor?.querySelector?.(".entity-visibility-sections");
+      if (!draft || !entitySections) return;
+      const visibleKeys = new Set(visibleOrder);
+      let visibleIndex = 0;
+      draft.section_order = orderedGroupKeys(draft.section_order).map(group => (
+        visibleKeys.has(group) ? visibleOrder[visibleIndex++] : group
+      ));
+      const panels = new Map(Array.from(
+        entitySections?.querySelectorAll?.(".entity-visibility-section") || [],
+      ).map(panel => [panel.dataset.group, panel]));
+      for (const group of visibleOrder) entitySections?.append(panels.get(group));
+    }
+
+    _sectionDragStart(event) {
+      const handle = event.target.closest?.(".entity-section-drag-handle");
+      const row = handle?.closest?.(".entity-visibility-section");
+      if (!row) return;
+      this._draggedSection = {hub:row.dataset.hub, group:row.dataset.group};
+      row.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.dataset.group);
+      }
+    }
+
+    _sectionDropPosition(event) {
+      const dragged = this._draggedSection;
+      if (!dragged) return null;
+      const directRow = event.target.closest?.(".entity-visibility-section");
+      const container = directRow?.parentElement
+        || event.target.closest?.(".entity-visibility-sections");
+      if (!container || container.dataset.hub !== dragged.hub) return null;
+      const rows = Array.from(container.querySelectorAll(".entity-visibility-section"))
+        .filter(row => row.dataset.group !== dragged.group);
+      if (!rows.length) return {container, row:null, after:false};
+      if (directRow && directRow.dataset.group !== dragged.group) {
+        const rect = directRow.getBoundingClientRect();
+        return {container, row:directRow, after:event.clientY >= rect.top + rect.height / 2};
+      }
+      const nextRow = rows.find(row => {
+        const rect = row.getBoundingClientRect();
+        return event.clientY < rect.top + rect.height / 2;
+      });
+      return nextRow
+        ? {container, row:nextRow, after:false}
+        : {container, row:rows.at(-1), after:true};
+    }
+
+    _sectionDragOver(event) {
+      const position = this._sectionDropPosition(event);
+      if (!position) return;
+      event.preventDefault();
+      for (const candidate of position.container.querySelectorAll(".entity-visibility-section")) {
+        candidate.classList.remove("drop-before", "drop-after");
+      }
+      position.row?.classList.add(position.after ? "drop-after" : "drop-before");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    }
+
+    _sectionDrop(event) {
+      const dragged = this._draggedSection;
+      const position = this._sectionDropPosition(event);
+      if (!dragged || !position) return;
+      event.preventDefault();
+      if (!position.row) {
+        this._clearSectionDrag();
+        return;
+      }
+      const visibleOrder = Array.from(position.container.querySelectorAll(".entity-visibility-section"))
+        .map(candidate => candidate.dataset.group)
+        .filter(group => group !== dragged.group);
+      const targetIndex = visibleOrder.indexOf(position.row.dataset.group);
+      visibleOrder.splice(Math.max(0, targetIndex + (position.after ? 1 : 0)), 0, dragged.group);
+      const currentOrder = Array.from(
+        position.container.querySelectorAll(".entity-visibility-section"),
+        candidate => candidate.dataset.group,
+      );
+      if (visibleOrder.some((group, index) => group !== currentOrder[index])) {
+        this._applyEditorSectionOrder(dragged.hub, visibleOrder);
+      }
+      this._clearSectionDrag();
+    }
+
+    _clearSectionDrag() {
+      this._draggedSection = null;
+      for (const row of this.shadowRoot.querySelectorAll?.(".entity-visibility-section") || []) {
+        row.classList.remove("dragging", "drop-before", "drop-after");
+      }
     }
 
     _updateEditorState() {
@@ -1034,11 +1293,12 @@
     }
 
     _groups(entities) {
+      const settings = this._hubSettings();
       const hiddenSections = this._hiddenSections();
       const grouped = new Map(GROUPS.map(([key]) => [key, []]));
       for (const item of entities) grouped.get(groupFor(item.entry, item.state)).push(item);
-      const groups = [];
-      GROUPS.forEach(([key], order) => {
+      const renderedGroups = [];
+      orderedGroupKeys(settings.section_order).forEach((key, order) => {
         if (hiddenSections.has(key)) return;
         const items = grouped.get(key);
         if (!items.length) return;
@@ -1070,9 +1330,15 @@
           </summary>
           <div class="entity-list">${itemMarkup}</div>
         </details>`;
-        groups.push(markup);
+        renderedGroups.push({markup, weight:items.length + 1});
       });
-      return groups.join("");
+      const columns = sectionFlow(settings.section_flow) === "vertical"
+        ? verticalGroupColumns(renderedGroups, this._groupColumnCount)
+        : horizontalGroupColumns(renderedGroups, this._groupColumnCount);
+      return columns
+        .filter(items => items.length)
+        .map(items => `<div class="group-column">${items.map(item => item.markup).join("")}</div>`)
+        .join("");
     }
 
     _hydrateNativeEntityElements() {
@@ -1403,19 +1669,32 @@
       .standalone-section-toggle ha-icon {
         color: var(--primary-color);
       }
-      .entity-id-toggle {
+      .entity-id-toggle, .section-flow-setting {
         margin-bottom: 24px;
+      }
+      .section-flow-options {
+        --button-toggle-icon-size: 22px;
       }
       .entity-visibility-section {
         display: block;
         min-width: 0;
         overflow: hidden;
+        transition: opacity .15s ease, box-shadow .15s ease;
         --expansion-panel-content-padding: 0;
         --ha-card-border-radius: var(--ha-border-radius-md,12px);
       }
+      .entity-visibility-section.dragging {
+        opacity: .45;
+      }
+      .entity-visibility-section.drop-before {
+        box-shadow: inset 0 3px 0 var(--primary-color);
+      }
+      .entity-visibility-section.drop-after {
+        box-shadow: inset 0 -3px 0 var(--primary-color);
+      }
       .entity-section-header {
         display: grid;
-        grid-template-columns: minmax(0,1fr) auto auto;
+        grid-template-columns: auto minmax(0,1fr) auto auto;
         align-items: center;
         gap: 10px;
         width: 100%;
@@ -1423,13 +1702,20 @@
         font-size: 15px;
         font-weight: 500;
       }
-      .entity-visibility-section > ha-icon {
+      .entity-section-icon {
         color: var(--primary-color);
       }
       .entity-section-header small {
         color: var(--secondary-text-color);
         font-size: 12px;
         font-weight: 400;
+      }
+      .entity-section-drag-handle {
+        color: var(--secondary-text-color);
+        cursor: grab;
+      }
+      .entity-visibility-section.dragging .entity-section-drag-handle {
+        cursor: grabbing;
       }
       .entity-visibility-section .visibility-list {
         gap: 0;
@@ -1627,17 +1913,21 @@
         font-size: 10px;
       }
       .groups {
-        columns: 400px;
-        column-gap: 16px;
+        display: grid;
+        grid-template-columns: repeat(var(--group-columns,1),minmax(0,1fr));
+        gap: 16px;
+        align-items: start;
         margin-top: 28px;
       }
-      .entity-group {
-        display: inline-block;
-        width: 100%;
+      .group-column {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
         min-width: 0;
-        margin-bottom: 16px;
+      }
+      .entity-group {
+        min-width: 0;
         overflow: hidden;
-        break-inside: avoid;
         border: 1px solid var(--divider-color);
         border-radius: 18px;
         background: var(--card-background-color);
@@ -1873,10 +2163,12 @@
           flex-direction: column;
           gap: 16px;
         }
+        .group-column {
+          display: contents;
+        }
         .entity-group {
           display: block;
           order: var(--group-order);
-          margin-bottom: 0;
         }
         .entity-state small {
           display: none;
@@ -2099,7 +2391,10 @@
       const content = this._loading
         ? `<p class="message">${this._t("panel.discovering_entities")}</p>`
         : `${this._charts()}
-          <div class="groups">
+          <div
+            class="groups flow-${sectionFlow(this._hubSettings().section_flow)}"
+            style="--group-columns:${this._groupColumnCount}"
+          >
             ${entityGroups || (!entities.length ? `<p class="empty">${this._t("panel.empty")}</p>` : "")}
           </div>`;
 
@@ -2292,8 +2587,12 @@
     chartable,
     unavailable,
     entityName,
+    groupColumnCount,
+    verticalGroupColumns,
+    horizontalGroupColumns,
     languageFor,
     localize,
+    orderedGroupKeys,
   };
   console.info(`%c WISER HUB PANEL %c ${VERSION} `, "color:#39d353;font-weight:bold;background:#101214", "color:white;background:#555");
 })();
