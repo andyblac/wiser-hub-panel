@@ -5,6 +5,7 @@
   const pluralFormatters = new Map();
   const relativeTimeFormatters = new Map();
   const numberFormatters = new Map();
+  const selectedHubs = new Map();
   const GROUP_MIN_WIDTH = 400;
   const GROUP_GAP = 16;
   const GROUP_MAX_COLUMNS = 4;
@@ -276,7 +277,11 @@
       this._config = config;
       this._configFingerprint = fingerprint;
       const hubs = Array.isArray(config.hubs) ? config.hubs : [];
-      if (!hubs.includes(this._hub)) this._hub = hubs[0];
+      if (!hubs.includes(this._hub)) {
+        const rememberedHub = config.panel_id ? selectedHubs.get(config.panel_id) : undefined;
+        this._hub = hubs.includes(rememberedHub) ? rememberedHub : hubs[0];
+      }
+      if (config.panel_id && this._hub) selectedHubs.set(config.panel_id, this._hub);
       if (changed) this._registryLoaded = false;
       if (!this._registryLoaded) this._discover();
     }
@@ -502,6 +507,7 @@
     }
     _selectHub(hub, focus = false) {
       if (!this._config?.hubs?.includes(hub)) return;
+      if (this._config.panel_id) selectedHubs.set(this._config.panel_id, hub);
       if (focus) this._pendingHubFocus = hub;
       if (this._hub === hub) {
         if (focus) this._renderSoon();
@@ -518,7 +524,7 @@
       this._renderSoon();
     }
     _keydown(event) {
-      const tab = event.target.closest?.('[role="tab"][data-action]');
+      const tab = event.target.closest?.('[role="tab"][data-action="hub"]');
       if (!tab) return;
       const hubs = this._config?.hubs || [];
       const index = hubs.indexOf(tab.dataset.hub);
@@ -530,11 +536,7 @@
       else if (event.key === "End") next = hubs.length - 1;
       else return;
       event.preventDefault();
-      if (tab.dataset.action === "editor-hub") {
-        this._selectEditorHub(hubs[next], true);
-      } else if (tab.dataset.action === "hub") {
-        this._selectHub(hubs[next], true);
-      }
+      this._selectHub(hubs[next], true);
     }
     _clearError() {
       this._error = "";
@@ -573,6 +575,15 @@
         && /wiser|drayton|schneider/i.test(`${device.manufacturer || ""} ${device.model || ""}`)
       ))
         || devices.find(device => !device.via_device_id);
+    }
+    _hubGeneration(hub = this._hub) {
+      for (const entry of this._hubEntries(true, hub)) {
+        const generation = Number(
+          this._hass?.states?.[entry.entity_id]?.attributes?.hardware_generation,
+        );
+        if (Number.isInteger(generation) && generation > 0) return generation;
+      }
+      return null;
     }
     _hubDevices() {
       const hub = this._hubDevice();
@@ -692,17 +703,18 @@
       if (!this._hass?.user?.is_admin || !this._config?.panel_id || !this._config?.hubs?.length) return;
       const dialog = this.shadowRoot.querySelector?.("#config-dialog");
       if (dialog?.open) return;
-      this._editorDrafts = Object.fromEntries((this._config.hubs || []).map(hub => {
-        const settings = this._hubSettings(hub);
-        return [hub, {
+      const hub = this._config.hubs.includes(this._hub) ? this._hub : this._config.hubs[0];
+      const settings = this._hubSettings(hub);
+      this._editorDrafts = {
+        [hub]:{
           hidden_sections:[...(Array.isArray(settings.hidden_sections) ? settings.hidden_sections : [])],
           hidden_entities:[...(Array.isArray(settings.hidden_entities) ? settings.hidden_entities : [])],
           show_entity_ids:Boolean(settings.show_entity_ids),
           section_order:orderedGroupKeys(settings.section_order),
           section_flow:sectionFlow(settings.section_flow),
-        }];
-      }));
-      this._editorHub = this._config.hubs?.includes(this._hub) ? this._hub : this._config.hubs?.[0];
+        },
+      };
+      this._editorHub = hub;
       this._editorError = "";
       this._editorOpen = true;
       this._renderEditor();
@@ -760,6 +772,7 @@
         const configs = Object.fromEntries((this._config.hubs || []).map(hub => {
           const draft = this._editorDrafts[hub];
           const settings = {...this._hubSettings(hub)};
+          if (!draft) return [hub, settings];
           const hiddenSections = [...new Set(draft.hidden_sections)].sort();
           const hiddenEntities = [...new Set(draft.hidden_entities)].sort();
           if (hiddenSections.length) settings.hidden_sections = hiddenSections;
@@ -796,7 +809,7 @@
       }
     }
 
-    _editorHubMarkup(hub, index) {
+    _editorHubMarkup(hub) {
       const draft = this._editorDrafts?.[hub];
       if (!draft) return "";
       const hiddenSections = new Set(draft.hidden_sections);
@@ -849,14 +862,7 @@
           <div class="visibility-list entity-visibility-list">${rows}</div>
         </ha-expansion-panel>`;
       }).join("");
-      return `<section
-          id="editor-hub-panel-${index}"
-          class="hub-editor"
-          data-hub="${esc(hub)}"
-          role="tabpanel"
-          aria-labelledby="editor-hub-tab-${index}"
-          ${hub === this._editorHub ? "" : "hidden"}
-        >
+      return `<section class="hub-editor" data-hub="${esc(hub)}">
           <h2>${esc(hub)}</h2>
           <p>${this._t("panel.settings_description", {hub})}</p>
           <div class="standalone-section-toggle entity-id-toggle">
@@ -903,24 +909,8 @@
 
     _editorMarkup() {
       if (!this._editorDrafts) return "";
-      const hubs = this._config.hubs || [];
-      const hubTabs = hubs.length > 1 ? `<nav class="editor-hub-tabs" role="tablist" aria-label="${esc(this._t("panel.wiser_hubs"))}">
-        ${hubs.map((hub, index) => `<button
-          type="button"
-          id="editor-hub-tab-${index}"
-          class="editor-hub-tab"
-          role="tab"
-          aria-controls="editor-hub-panel-${index}"
-          aria-selected="${hub === this._editorHub}"
-          tabindex="${hub === this._editorHub ? 0 : -1}"
-          data-action="editor-hub"
-          data-hub="${esc(hub)}"
-        >${esc(hub)}</button>`).join("")}
-      </nav>` : "";
-      const hubEditors = hubs.map((hub, index) => this._editorHubMarkup(hub, index)).join("");
       return `<div class="config-editor">
-          ${hubTabs}
-          ${hubEditors}
+          ${this._editorHubMarkup(this._editorHub)}
           <p class="editor-error" role="alert">${esc(this._editorError)}</p>
         </div>
         <div class="dialog-actions" id="editor-actions" slot="footer">
@@ -977,22 +967,6 @@
         dialog.querySelector?.("#editor-actions")?.removeAttribute("slot");
       }
       dialog.open = true;
-    }
-
-    _selectEditorHub(hub, focus = false) {
-      if (!this._editorOpen || !this._config?.hubs?.includes(hub)) return;
-      this._editorHub = hub;
-      for (const tab of this.shadowRoot.querySelectorAll?.('[data-action="editor-hub"]') || []) {
-        const selected = tab.dataset.hub === hub;
-        tab.setAttribute("aria-selected", String(selected));
-        tab.tabIndex = selected ? 0 : -1;
-        if (selected && focus) tab.focus({preventScroll:true});
-      }
-      for (const editor of this.shadowRoot.querySelectorAll?.(".hub-editor") || []) {
-        editor.hidden = editor.dataset.hub !== hub;
-      }
-      const container = this.shadowRoot.querySelector?.(".config-editor");
-      if (container) container.scrollTop = 0;
     }
 
     _applyEditorSectionOrder(hub, visibleOrder) {
@@ -1197,6 +1171,17 @@
       </button>`;
     }
 
+    _entityDetailLink(entry, state, label = entityName(state, entry, this._hass)) {
+      const name = entityName(state, entry, this._hass);
+      return `<button
+        type="button"
+        class="detail-link"
+        data-action="more"
+        data-entity="${esc(entry.entity_id)}"
+        aria-label="${esc(`${this._t("common.details")}: ${name}`)}"
+      >${esc(label)}</button>`;
+    }
+
     _entityRow({entry, state}) {
       const alert = unavailable(state);
       const entityId = esc(entry.entity_id);
@@ -1354,7 +1339,8 @@
 
     _style() { return `<style>
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
         height: 100%;
         min-width: 0;
         overflow: auto;
@@ -1365,6 +1351,12 @@
       }
       * {
         box-sizing: border-box;
+      }
+      #panel-content {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 100%;
       }
       button, select, input {
         font: inherit;
@@ -1452,12 +1444,33 @@
         background: var(--secondary-background-color);
         cursor: pointer;
       }
-      .hub-tabs {
+      header {
         display: flex;
+        flex: 0 0 64px;
+        align-items: center;
+        gap: 16px;
         min-width: 0;
-        margin-bottom: 18px;
+        padding: 0 16px;
+        background: var(--app-header-background-color);
+        color: var(--app-header-text-color);
+      }
+      #hub-tabs {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        margin-inline-start: 24px;
+        align-self: stretch;
         overflow-x: auto;
-        border-bottom: 1px solid var(--divider-color);
+      }
+      :host([nested]) header {
+        flex-basis: 56px;
+        height: 56px;
+      }
+      :host([nested]) #hub-tabs {
+        margin-inline-start: 0;
+      }
+      #hub-tabs[hidden] {
+        display: none;
       }
       .hub-tab {
         flex: 0 0 auto;
@@ -1466,12 +1479,13 @@
         border: 0;
         border-bottom: 2px solid transparent;
         color: var(--secondary-text-color);
+        font: inherit;
         background: transparent;
         cursor: pointer;
       }
       .hub-tab[aria-selected="true"] {
+        color: var(--app-header-text-color,var(--primary-text-color));
         border-bottom-color: currentColor;
-        color: var(--primary-color);
       }
       .hub-tab:focus-visible {
         outline: 2px solid currentColor;
@@ -1613,31 +1627,6 @@
         margin: 0 0 12px;
         font-size: 18px;
         font-weight: 500;
-      }
-      .editor-hub-tabs {
-        position: sticky;
-        z-index: 2;
-        top: 0;
-        display: flex;
-        min-width: 0;
-        margin: 0 0 20px;
-        overflow-x: auto;
-        border-bottom: 1px solid var(--divider-color);
-        background: var(--primary-background-color, var(--ha-color-surface-default,#fff));
-      }
-      .editor-hub-tab {
-        flex: 0 0 auto;
-        min-height: 48px;
-        padding: 0 20px;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--secondary-text-color);
-        background: transparent;
-        cursor: pointer;
-      }
-      .editor-hub-tab[aria-selected="true"] {
-        border-bottom-color: var(--primary-color);
-        color: var(--primary-text-color);
       }
       .hub-editor > p {
         margin: 0 0 20px;
@@ -2108,6 +2097,18 @@
           grid-template-columns: repeat(2,minmax(0,1fr));
         }
       }
+      @media (max-width: 600px) {
+        header {
+          gap: 8px;
+          padding: 0 8px;
+        }
+        #hub-tabs {
+          margin-inline-start: 0;
+        }
+        .hub-tab {
+          padding: 0 12px;
+        }
+      }
       @media (max-width: 720px) {
         .page {
           padding-top: 14px;
@@ -2138,9 +2139,6 @@
           display: none;
         }
         .editor-version { max-width: 42%; }
-        .hub-tab {
-          padding: 0 12px;
-        }
         .metrics {
           grid-template-columns: repeat(2,minmax(0,1fr));
           gap: 8px;
@@ -2222,26 +2220,25 @@
           aria-label="${esc(`${this._t("common.details")}: ${name}`)}"
         >${esc(name)}</a>`;
       }).join("");
-      const disabledEntityLinks = summary.disabled.map(entry => {
-        const name = entityName(this._hass?.states?.[entry.entity_id], entry, this._hass);
-        return `<button
-          type="button"
-          class="detail-link"
-          data-action="more"
-          data-entity="${esc(entry.entity_id)}"
-          aria-label="${esc(`${this._t("common.details")}: ${name}`)}"
-        >${esc(name)}</button>`;
-      }).join("");
-      const offlineNames = summary.offline
-        .map(({entry, state}) => entityName(state, entry, this._hass))
-        .join(", ");
-      const batteryNames = summary.batteries
-        .map(({entry, state}) => `${entityName(state, entry, this._hass)} (${this._formatState(state)})`)
-        .join(", ");
+      const disabledEntityLinks = summary.disabled.map(entry => (
+        this._entityDetailLink(entry, this._hass?.states?.[entry.entity_id])
+      )).join("");
+      const offlineEntityLinks = summary.offline.map(({entry, state}) => (
+        this._entityDetailLink(entry, state)
+      )).join("");
+      const batteryEntityLinks = summary.batteries.map(({entry, state}) => (
+        this._entityDetailLink(
+          entry,
+          state,
+          `${entityName(state, entry, this._hass)} (${this._formatState(state)})`,
+        )
+      )).join("");
       const entityGroups = this._groups(entities);
+      const hubGeneration = this._hubGeneration();
       const hubMetadata = [
         hub?.manufacturer,
         hub?.model,
+        hubGeneration ? this._t("panel.generation", {generation:hubGeneration}) : "",
         hub?.sw_version ? this._t("panel.firmware", {version:hub.sw_version}) : "",
       ].filter(Boolean).join(" · ") || this._t("panel.live_overview");
       const diagnosticsButton = this._hass.user?.is_admin && this._hubId()
@@ -2259,23 +2256,25 @@
       const heroActions = diagnosticsButton
         ? `<div class="hero-actions">${diagnosticsButton}</div>`
         : "";
-      const hubTabs = hubs.length > 1 ? `<nav
-        class="hub-tabs"
-        role="tablist"
-        aria-label="${esc(this._t("panel.wiser_hubs"))}"
-      >
-        ${hubs.map((name, index) => `<button
-          type="button"
-          id="hub-tab-${index}"
-          class="hub-tab"
-          role="tab"
-          aria-controls="hub-panel-content"
-          aria-selected="${name === this._hub}"
-          tabindex="${name === this._hub ? 0 : -1}"
-          data-action="hub"
-          data-hub="${esc(name)}"
-        >${esc(name)}</button>`).join("")}
-      </nav>` : "";
+      const hubTabs = hubs.length > 1 ? `<header>
+        <nav
+          id="hub-tabs"
+          role="tablist"
+          aria-label="${esc(this._t("panel.wiser_hubs"))}"
+        >
+          ${hubs.map((name, index) => `<button
+            type="button"
+            id="hub-tab-${index}"
+            class="hub-tab"
+            role="tab"
+            aria-controls="hub-panel-content"
+            aria-selected="${name === this._hub}"
+            tabindex="${name === this._hub ? 0 : -1}"
+            data-action="hub"
+            data-hub="${esc(name)}"
+          >${esc(name)}</button>`).join("")}
+        </nav>
+      </header>` : "";
       const activeHubIndex = Math.max(0, hubs.indexOf(this._hub));
       const hubPanelAttributes = hubs.length > 1
         ? ` role="tabpanel" aria-labelledby="hub-tab-${activeHubIndex}"`
@@ -2284,14 +2283,17 @@
         <ha-icon icon="mdi:alert-circle-outline"></ha-icon>
         <span>
           <strong>${this._t("panel.unavailable_count", {count:summary.offline.length})}</strong><br>
-          <small>${esc(offlineNames)}</small>
+          <small class="detail-list">${offlineEntityLinks}</small>
         </span>
       </div>` : "";
       const batteryAlert = summary.batteries.length ? `<div class="alert-card">
         <ha-icon icon="mdi:battery-alert"></ha-icon>
         <span>
           <strong>${this._plural("panel.low_battery", summary.batteries.length)}</strong><br>
-          <small>${esc(batteryNames)} · ${this._t("panel.below_twenty_percent")}</small>
+          <small class="detail-list">
+            ${batteryEntityLinks}
+            <span>${this._t("panel.below_twenty_percent")}</span>
+          </small>
         </span>
       </div>` : "";
       const alerts = offlineAlert || batteryAlert
@@ -2399,8 +2401,7 @@
           </div>`;
 
       const panelContent = this.shadowRoot.querySelector?.("#panel-content") || this.shadowRoot;
-      panelContent.innerHTML = `${this._style()}<div class="page">
-        ${hubTabs}
+      panelContent.innerHTML = `${this._style()}${hubTabs}<div class="page">
         <div id="hub-panel-content" data-hub="${esc(this._hub)}"${hubPanelAttributes}>
         <section class="hero">
           <div class="hero-top">
@@ -2505,8 +2506,6 @@
         this._selectHub(target.dataset.hub);
       } else if (action === "diagnostics") {
         await this._downloadDiagnostics();
-      } else if (action === "editor-hub") {
-        this._selectEditorHub(target.dataset.hub);
       } else if (action === "editor-cancel") {
         this._closeEditor();
       } else if (action === "editor-save") {

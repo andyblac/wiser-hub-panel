@@ -52,6 +52,7 @@
   "panel.entities": "Entities",
   "panel.entity_visibility": "Entities",
   "panel.firmware": "Firmware {version}",
+  "panel.generation": "Generation {generation}",
   "panel.flow_horizontal": "Left to right, then top to bottom",
   "panel.flow_vertical": "Top to bottom, then left to right",
   "panel.hub_entities_shown": "{count} Hub entities shown",

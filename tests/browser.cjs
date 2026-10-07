@@ -31,12 +31,17 @@ function fixtureData() {
       friendly_name:`Battery ${index}`,
     });
   }
+  add("sensor.offline_battery", "unavailable", {
+    device_class:"battery",
+    friendly_name:"Offline battery",
+  });
   for (let index = 0; index < 8; index += 1) {
     add(`switch.output_${index}`, "off", {friendly_name:`Output ${index}`});
   }
   add("sensor.temperature", 20, {
     device_class:"temperature",
     friendly_name:"Hub temperature",
+    hardware_generation:2,
   });
   add("sensor.power", 2.5, {device_class:"power", friendly_name:"Hub power"});
   add("sensor.humidity", 45, {device_class:"humidity", friendly_name:"Hub humidity"});
@@ -63,9 +68,14 @@ function fixtureData() {
     await page.setContent(`<!doctype html>
       <style>
         html, body { height: 100%; margin: 0; }
-        wiser-hub-panel { display: block; height: 100%; }
+        wiser-hub-panel {
+          display: block;
+          height: 100%;
+          --app-header-text-color: rgb(12, 34, 56);
+          --primary-color: rgb(65, 105, 225);
+        }
       </style>
-      <wiser-hub-panel></wiser-hub-panel>`);
+      <wiser-hub-panel nested></wiser-hub-panel>`);
     await page.addScriptTag({path:path.join(root, "dist/wiser-hub-panel.js")});
     const fixture = fixtureData();
     await page.evaluate(({entries, states}) => {
@@ -145,6 +155,7 @@ function fixtureData() {
 
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     const panel = page.locator("wiser-hub-panel");
+    assert.match(await panel.locator(".hub-meta").textContent(), /Generation 2/);
     assert.equal(await page.locator("wiser-hub-panel .entity-copy small").count(), 0);
     const groupColumnCount = () => panel.evaluate(element => new Set(
       [...element.shadowRoot.querySelectorAll("details.entity-group")]
@@ -197,6 +208,24 @@ function fixtureData() {
     const tabs = page.getByRole("tab");
     assert.equal(await tabs.count(), 2);
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
+    assert.deepEqual(await tabs.nth(0).evaluate(tab => {
+      const tabStyle = getComputedStyle(tab);
+      const tabsStyle = getComputedStyle(tab.parentElement);
+      const headerStyle = getComputedStyle(tab.closest("header"));
+      return {
+        color:tabStyle.color,
+        underline:tabStyle.borderBottomColor,
+        containerBorder:tabsStyle.borderBottomWidth,
+        headerHeight:headerStyle.height,
+        headerPadding:headerStyle.paddingLeft,
+      };
+    }), {
+      color:"rgb(12, 34, 56)",
+      underline:"rgb(12, 34, 56)",
+      containerBorder:"0px",
+      headerHeight:"56px",
+      headerPadding:"16px",
+    });
     await tabs.nth(0).focus();
     await page.keyboard.press("ArrowRight");
     await page.waitForFunction(() => document
@@ -216,7 +245,7 @@ function fixtureData() {
     await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
     const attention = page.getByRole("button", {name:"Show what needs attention"});
-    assert.equal(await attention.locator("strong").textContent(), "1");
+    assert.equal(await attention.locator("strong").textContent(), "2");
     const attentionDetails = page.locator("wiser-hub-panel #attention-details");
     assert.equal(await attentionDetails.isHidden(), true);
     await attention.click();
@@ -229,6 +258,10 @@ function fixtureData() {
       await attentionDetails.textContent(),
       /Battery 0 \(10\)/,
     );
+    await attentionDetails.getByRole("button", {name:"Details: Offline battery"}).click();
+    assert.equal(await page.evaluate(() => window.moreInfoEntity), "sensor.offline_battery");
+    await attentionDetails.getByRole("button", {name:"Details: Battery 0"}).click();
+    assert.equal(await page.evaluate(() => window.moreInfoEntity), "sensor.battery_0");
     await page.locator('wiser-hub-panel [data-action="attention"]').click();
     assert.equal(await attentionDetails.isHidden(), true);
     const disabledDevices = page.getByRole("button", {name:"Show disabled devices"});
@@ -314,23 +347,11 @@ function fixtureData() {
     const editor = page.locator("wiser-hub-panel #config-dialog");
     assert.equal(await editor.evaluate(element => element.open), true);
     assert.ok((await editor.textContent()).includes(`Wiser Hub Panel · ${packageVersion}`));
-    assert.equal(await editor.locator(".hub-editor").count(), 2);
-    assert.deepEqual(
-      await editor.locator(".hub-editor > h2").allTextContents(),
-      ["Home", "Workshop"],
-    );
-    const editorHubTabs = editor.getByRole("tab");
-    assert.equal(await editorHubTabs.count(), 2);
-    assert.equal(await editorHubTabs.nth(0).getAttribute("aria-selected"), "true");
+    assert.equal(await editor.locator(".hub-editor").count(), 1);
+    assert.deepEqual(await editor.locator(".hub-editor > h2").allTextContents(), ["Home"]);
+    assert.equal(await editor.locator('[data-action="editor-hub"]').count(), 0);
     assert.equal(await editor.locator('.hub-editor[data-hub="Home"]').isVisible(), true);
-    assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').isVisible(), false);
-    await editor.locator(".config-editor").evaluate(element => { element.scrollTop = 100; });
-    await editorHubTabs.nth(1).click();
-    assert.equal(await editorHubTabs.nth(1).getAttribute("aria-selected"), "true");
-    assert.equal(await editor.locator(".config-editor").evaluate(element => element.scrollTop), 0);
-    assert.equal(await editor.locator('.hub-editor[data-hub="Home"]').isVisible(), false);
-    assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').isVisible(), true);
-    await editorHubTabs.nth(0).click();
+    assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').count(), 0);
     assert.equal(await editor.locator('[data-action="editor-cancel"]').evaluate(element => element.tagName), "HA-BUTTON");
     assert.equal(await editor.locator('[data-action="editor-cancel"]').getAttribute("appearance"), "plain");
     assert.equal(await editor.locator('[data-action="editor-save"]').evaluate(element => element.tagName), "HA-BUTTON");

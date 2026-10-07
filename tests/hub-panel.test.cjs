@@ -282,6 +282,23 @@ test("discovers only enabled Wiser entities for the selected hub", async () => {
   assert.equal(summary.offline[0].entry.entity_id, "sensor.room_offline");
 });
 
+test("reads the hub hardware generation from entity attributes", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  panel._hubEntries = () => [
+    {entity_id:"sensor.hub_signal"},
+    {entity_id:"sensor.other"},
+  ];
+  panel._hass = {states:{
+    "sensor.hub_signal":state("sensor.hub_signal", 80, {hardware_generation:2}),
+    "sensor.other":state("sensor.other", 1, {hardware_generation:"unknown"}),
+  }};
+
+  assert.equal(panel._hubGeneration(), 2);
+  panel._hass.states["sensor.hub_signal"].attributes.hardware_generation = 0;
+  assert.equal(panel._hubGeneration(), null);
+});
+
 test("discovers when panel configuration arrives before Home Assistant", async () => {
   const {Panel} = setup();
   const panel = new Panel();
@@ -428,6 +445,25 @@ test("switches hub tabs with standard keyboard navigation", () => {
   assert.equal(histories, 1);
   assert.equal(renders, 1);
   assert.equal(prevented, true);
+});
+
+test("preserves the selected hub when Home Assistant recreates the panel", () => {
+  const {Panel} = setup();
+  const config = {
+    panel_id:"registry-panel",
+    hubs:["Home", "Workshop"],
+    hub_ids:{Home:"hub-a", Workshop:"hub-b"},
+  };
+  const firstPanel = new Panel();
+  firstPanel.panel = {config};
+  firstPanel._loadHistory = () => {};
+  firstPanel._renderSoon = () => {};
+
+  firstPanel._selectHub("Workshop");
+
+  const replacementPanel = new Panel();
+  replacementPanel.panel = {config:{...config, card_configs:{Workshop:{show_entity_ids:true}}}};
+  assert.equal(replacementPanel._hub, "Workshop");
 });
 
 test("toggles attention details from the summary", async () => {
@@ -604,6 +640,7 @@ test("saves visual visibility settings through the shared panel API", async () =
     card_configs:{Home:{existing:true}, Workshop:{layout:"compact"}},
   };
   panel._hub = "Home";
+  panel._editorHub = "Home";
   panel._editorOpen = true;
   panel._editorDrafts = {
     Home:{
@@ -613,7 +650,6 @@ test("saves visual visibility settings through the shared panel API", async () =
       section_order:["actions", "controls"],
       section_flow:"vertical",
     },
-    Workshop:{hidden_sections:["history"], hidden_entities:[], show_entity_ids:false},
   };
   panel._loadHistory = () => {};
   panel._renderSoon = () => {};
@@ -632,13 +668,37 @@ test("saves visual visibility settings through the shared panel API", async () =
         section_order:["actions", "controls", "heating", "environment", "energy", "safety", "sensors", "diagnostics", "system"],
         section_flow:"vertical",
       },
-      Workshop:{layout:"compact", hidden_sections:["history"]},
+      Workshop:{layout:"compact"},
     },
   });
   assert.equal(panel._config.card_configs.Home.existing, true);
   assert.equal(panel._config.card_configs.Workshop.layout, "compact");
   assert.equal(panel._editorOpen, false);
   assert.equal(panel._editorDrafts, null);
+});
+
+test("opens the visual editor for only the currently selected hub", () => {
+  const {Panel} = setup();
+  const panel = new Panel();
+  panel._hass = {user:{is_admin:true}};
+  panel._config = {
+    panel_id:"registry-panel",
+    hubs:["Home", "Workshop"],
+    card_configs:{
+      Home:{hidden_sections:["history"]},
+      Workshop:{show_entity_ids:true, section_flow:"vertical"},
+    },
+  };
+  panel._hub = "Workshop";
+  panel._renderEditor = () => {};
+  panel._ensureSectionFlowControl = () => Promise.resolve(false);
+
+  panel._openEditor();
+
+  assert.equal(panel._editorHub, "Workshop");
+  assert.deepEqual(Object.keys(panel._editorDrafts), ["Workshop"]);
+  assert.equal(panel._editorDrafts.Workshop.show_entity_ids, true);
+  assert.equal(panel._editorDrafts.Workshop.section_flow, "vertical");
 });
 
 test("adds accessible labels to search and history charts", () => {

@@ -52,6 +52,7 @@
   "panel.entities": "Entités",
   "panel.entity_visibility": "Entités",
   "panel.firmware": "Micrologiciel {version}",
+  "panel.generation": "Génération {generation}",
   "panel.flow_horizontal": "De gauche à droite, puis de haut en bas",
   "panel.flow_vertical": "De haut en bas, puis de gauche à droite",
   "panel.hub_entities_shown": "{count} entités du Hub affichées",
