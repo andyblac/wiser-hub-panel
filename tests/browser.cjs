@@ -205,27 +205,32 @@ function fixtureData() {
     });
     assert.equal(new Set(columnTops).size, 1, `column tops are misaligned: ${columnTops.join(", ")}`);
     await page.setViewportSize({width:900, height:600});
-    const tabs = page.getByRole("tab");
-    assert.equal(await tabs.count(), 2);
-    assert.equal(await tabs.nth(0).getAttribute("aria-selected"), "true");
-    assert.deepEqual(await tabs.nth(0).evaluate(tab => {
+    const tabLayout = await panel.evaluate(element => {
+      const tabs = [...element.shadowRoot.querySelectorAll('[role="tab"][data-action="hub"]')];
+      const tab = tabs[0];
       const tabStyle = getComputedStyle(tab);
       const tabsStyle = getComputedStyle(tab.parentElement);
       const headerStyle = getComputedStyle(tab.closest("header"));
       return {
+        count:tabs.length,
+        selected:tab.getAttribute("aria-selected"),
         color:tabStyle.color,
         underline:tabStyle.borderBottomColor,
         containerBorder:tabsStyle.borderBottomWidth,
         headerHeight:headerStyle.height,
         headerPadding:headerStyle.paddingLeft,
       };
-    }), {
+    });
+    assert.deepEqual(tabLayout, {
+      count:2,
+      selected:"true",
       color:"rgb(12, 34, 56)",
       underline:"rgb(12, 34, 56)",
       containerBorder:"0px",
       headerHeight:"56px",
       headerPadding:"16px",
     });
+    const tabs = page.getByRole("tab");
     await tabs.nth(0).focus();
     await page.keyboard.press("ArrowRight");
     await page.waitForFunction(() => document
