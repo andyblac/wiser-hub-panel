@@ -348,7 +348,9 @@ function fixtureData() {
     assert.equal(await editor.evaluate(element => element.open), true);
     assert.ok((await editor.textContent()).includes(`Wiser Hub Panel · ${packageVersion}`));
     assert.equal(await editor.locator(".hub-editor").count(), 1);
-    assert.deepEqual(await editor.locator(".hub-editor > h2").allTextContents(), ["Home"]);
+    assert.equal(await editor.locator(".hub-editor > h2").count(), 0);
+    assert.equal(await editor.getAttribute("header-title"), "Home - Panel settings");
+    assert.equal(await editor.getAttribute("aria-label"), "Home - Panel settings");
     assert.equal(await editor.locator('[data-action="editor-hub"]').count(), 0);
     assert.equal(await editor.locator('.hub-editor[data-hub="Home"]').isVisible(), true);
     assert.equal(await editor.locator('.hub-editor[data-hub="Workshop"]').count(), 0);

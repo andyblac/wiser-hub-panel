@@ -863,7 +863,6 @@
         </ha-expansion-panel>`;
       }).join("");
       return `<section class="hub-editor" data-hub="${esc(hub)}">
-          <h2>${esc(hub)}</h2>
           <p>${this._t("panel.settings_description", {hub})}</p>
           <div class="standalone-section-toggle entity-id-toggle">
             <ha-icon icon="mdi:identifier"></ha-icon>
@@ -927,10 +926,11 @@
     _renderEditor() {
       const dialog = this.shadowRoot.querySelector?.("#config-dialog");
       if (!dialog || !this._editorOpen || !this._editorDrafts) return;
+      const heading = `${this._editorHub} - ${this._t("panel.settings")}`;
       dialog.innerHTML = this._editorMarkup();
-      dialog.setAttribute("aria-label", this._t("panel.settings"));
-      dialog.setAttribute("header-title", this._t("panel.settings"));
-      dialog.heading = this._t("panel.settings");
+      dialog.setAttribute("aria-label", heading);
+      dialog.setAttribute("header-title", heading);
+      dialog.heading = heading;
       for (const checkbox of dialog.querySelectorAll?.("ha-checkbox[data-action]") || []) {
         checkbox.checked = checkbox.hasAttribute("checked");
       }
@@ -1622,11 +1622,6 @@
       .config-editor > p {
         margin: 0 0 20px;
         color: var(--secondary-text-color);
-      }
-      .config-editor h2 {
-        margin: 0 0 12px;
-        font-size: 18px;
-        font-weight: 500;
       }
       .hub-editor > p {
         margin: 0 0 20px;
