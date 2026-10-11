@@ -46,6 +46,7 @@
     if (language === "en-gb") return "en-GB";
     if (language === "fr" || language.startsWith("fr-")) return "fr";
     if (language === "de" || language.startsWith("de-")) return "de";
+    if (language === "hu" || language.startsWith("hu-")) return "hu";
     return "en-US";
   }
 

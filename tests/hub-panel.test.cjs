@@ -31,7 +31,7 @@ function setup() {
       define(name, constructor) { elements[name] = constructor; },
     },
   };
-  const languages = ["en-US", "en-GB", "fr", "de"];
+  const languages = ["en-US", "en-GB", "fr", "de", "hu"];
   const translations = Object.fromEntries(languages.map(language => [
     language,
     JSON.parse(fs.readFileSync(
@@ -112,9 +112,11 @@ test("localizes panel labels from Home Assistant's language", () => {
   assert.equal(helpers.languageFor({locale:{language:"en-GB"}}), "en-GB");
   assert.equal(helpers.languageFor({language:"fr-FR"}), "fr");
   assert.equal(helpers.languageFor({language:"de-DE"}), "de");
+  assert.equal(helpers.languageFor({language:"hu-HU"}), "hu");
   assert.equal(helpers.localize("panel.needs_attention", {language:"en-GB"}), "Needs attention");
   assert.equal(helpers.localize("panel.at_a_glance", {language:"fr"}), "Vue d’ensemble");
   assert.equal(helpers.localize("group.controls", {language:"de"}), "Hub-Steuerung");
+  assert.equal(helpers.localize("panel.at_a_glance", {language:"hu"}), "Áttekintés");
   assert.equal(helpers.localize("panel.at_a_glance", {language:"es"}), "At a glance");
   const nativeKeys = {
     "common.close":"ui.card.cover.close_cover",
@@ -141,6 +143,27 @@ test("localizes panel labels from Home Assistant's language", () => {
   const nativeHass = {language:"fr", localize:key => `native:${key}`};
   for (const [key, nativeKey] of Object.entries(nativeKeys)) {
     assert.equal(helpers.localize(key, nativeHass), `native:${nativeKey}`);
+  }
+});
+
+test("keeps translated locale keys and placeholders aligned with English", () => {
+  const languages = ["de", "fr", "hu"];
+  const english = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "../src/localize/languages/en-US.json"),
+    "utf8",
+  ));
+  const placeholders = value => [...value.matchAll(/\{(\w+)\}/g)]
+    .map(match => match[1])
+    .sort();
+  for (const language of languages) {
+    const translated = JSON.parse(fs.readFileSync(
+      path.join(__dirname, `../src/localize/languages/${language}.json`),
+      "utf8",
+    ));
+    assert.deepEqual(Object.keys(translated).sort(), Object.keys(english).sort(), language);
+    for (const key of Object.keys(english)) {
+      assert.deepEqual(placeholders(translated[key]), placeholders(english[key]), `${language}: ${key}`);
+    }
   }
 });
 

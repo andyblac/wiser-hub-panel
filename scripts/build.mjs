@@ -4,7 +4,7 @@ import buildVersion from "./build-version.mjs";
 
 const root = new URL("../", import.meta.url);
 const source = readFileSync(new URL("src/wiser-hub-panel.js", root), "utf8");
-const translationNames = ["en-US", "en-GB", "fr", "de"];
+const translationNames = ["en-US", "en-GB", "fr", "de", "hu"];
 const translations = Object.fromEntries(translationNames.map(language => [
   language,
   JSON.parse(readFileSync(new URL(`src/localize/languages/${language}.json`, root), "utf8")),
