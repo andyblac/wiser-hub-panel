@@ -127,6 +127,7 @@ function fixtureData() {
         formatEntityState:state => state.state,
         callWS:async message => {
           window.fixtureCalls.push(message);
+          if (message.type.startsWith("config/")) await window.fixtureRegistriesReady;
           return ({
             "config/entity_registry/list":entries,
             "config/device_registry/list":devices,
@@ -136,6 +137,9 @@ function fixtureData() {
         callApi:async () => [],
         callService:async () => {},
       };
+      window.fixtureRegistriesReady = new Promise(resolve => {
+        window.fixtureReleaseRegistries = resolve;
+      });
       window.fixtureCalls = [];
       panel.hass = hass;
       panel.panel = {
@@ -153,8 +157,18 @@ function fixtureData() {
       window.fixture = {panel, hass};
     }, fixture);
 
-    await page.locator("wiser-hub-panel .entity-row").first().waitFor();
     const panel = page.locator("wiser-hub-panel");
+    await panel.locator(".hero").waitFor();
+    const openingWidth = await panel.evaluate(element => ({
+      page:element.shadowRoot.querySelector(".page").getBoundingClientRect().width,
+      available:element.clientWidth,
+    }));
+    assert.equal(openingWidth.page, Math.min(openingWidth.available, 2400),
+      "loading page should already fill the available panel width");
+    await page.evaluate(() => window.fixtureReleaseRegistries());
+    await page.locator("wiser-hub-panel .entity-row").first().waitFor();
+    const populatedWidth = await panel.locator(".page").evaluate(element => element.getBoundingClientRect().width);
+    assert.equal(populatedWidth, openingWidth.page, "entity discovery should not expand the page from the centre");
     assert.match(await panel.locator(".hub-meta").textContent(), /Generation 2/);
     assert.equal(await page.locator("wiser-hub-panel .entity-copy small").count(), 0);
     const groupColumnCount = () => panel.evaluate(element => new Set(

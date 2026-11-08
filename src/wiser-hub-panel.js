@@ -1371,7 +1371,9 @@
         opacity: .65;
       }
       .page {
+        width: 100%;
         max-width: 2400px;
+        min-width: 0;
         margin: 0 auto;
         padding: 24px clamp(14px,3vw,40px) 56px;
       }
